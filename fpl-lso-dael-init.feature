@@ -2,7 +2,7 @@
 Feature: fpl-lso deal intialisation
 
   Background: 
-    Given I am logged in as "Raj.FrontOfficer-MultiGroup"
+    Given I am logged in as "issam.lyazidi"
 
   
   Scenario: deal initiation from fpl platform
