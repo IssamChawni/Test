@@ -6,7 +6,7 @@ Feature: fpl-lso deal intialisation
 
   
   Scenario: deal initiation from fpl platform
-    Given I am in fplportal page
+    Given I am in facilityDashBoardPage page
     And the deal is being initiated with the below information
       | confidentiality level | Deal Name    | Description                         | Client        | SG Role Category | Deal Amount | Currency | Expected Closing Date |
       | Confidential          | Eligible Opp | Create an Opportunity For E2E tests | AIR CANADA 	 | Financing        | 10M         | USD      | 6M                    |
