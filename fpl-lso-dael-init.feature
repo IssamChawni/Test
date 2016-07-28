@@ -1,5 +1,3 @@
---fpl-lso deal intialisation
-
 @fpl-lso
 Feature: fpl-lso deal intialisation
 
