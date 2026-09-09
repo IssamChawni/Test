@@ -1,0 +1,1159 @@
+####################################################################################################
+# Programme : sptit044                                                                             #
+# Type      : Batch                                                                                #
+# Titre     : Enrichissement flux provenant de BFI pour prise en charge par RDJ (RTC)              #
+####################################################################################################
+SCHEMA Bank
+####################################################################################################
+GLOBALS
+DEFINE g_hndlog     base.channel                  -- Fichier Trace
+DEFINE g_HndBfi     base.channel                  -- Fichier provenant de BFI
+DEFINE g_HndRDJ     base.channel                  -- Fichier sortie destiné à RDJ (Enrichissement)
+DEFINE g_uti        LIKE evuti.cuti               -- Utilisateur ayant lancer le programme
+DEFINE g_msgbox     CHAR(70)                      -- Zone pour les messages
+DEFINE g_base       CHAR(50)                      -- Nom de la base de données
+DEFINE g_hhmmss     CHAR(10)                      -- Heure sous format HHMMSS
+DEFINE g_ddmmyy     DATE                          -- Date sous format DDMMYY
+DEFINE g_prgname    CHAR(24)                      -- Nom programme lancé
+DEFINE g_datedeb    DATE                          -- Date debut
+DEFINE g_heurdeb    CHAR(6)                       -- Heure debut
+DEFINE g_dco        DATE                          -- Date comptable [778,PARAM1]
+DEFINE g_sql        STRING
+####################################################################################################
+DEFINE r_Bknom      RECORD LIKE Bknom.*
+DEFINE r_Bkbqe      RECORD LIKE Bkbqe.*
+DEFINE r_Bkcom      RECORD LIKE Bkcom.*
+DEFINE r_Bkacp      RECORD LIKE Bkacp.*
+DEFINE r_Bkcli      RECORD LIKE Bkcli.*
+DEFINE r_Bkadcli    RECORD LIKE Bkadcli.*
+####################################################################################################
+DEFINE r_Bk001_lib1 LIKE Bknom.lib1
+DEFINE r_Bk036_lib1 LIKE Bknom.lib1
+DEFINE r_Bk040_lib1 LIKE Bknom.lib1
+####################################################################################################
+DEFINE r_BFI RECORD                               -- Enregistrement BFI
+       age          CHAR(03),                     -- compte client : Code agence
+       dev          CHAR(02),                     -- compte client : Code devise
+       ncp          CHAR(06),                     -- compte client : N° de serie
+       clc          CHAR(02),                     -- compte client : Clé SGMA
+       isin         CHAR(12),                     -- ISIN
+       ctit         CHAR(05),                     -- Code Titre
+       ltit         CHAR(40),                     -- libellé titre
+       ftit         CHAR(01),                     -- Forme du Titre
+       ttit         CHAR(20),                     -- TYPE Titre
+       tope         CHAR(01),                     -- C=Confirmation,A=Annulation
+       cope         CHAR(06),                     -- Type Opération
+       lope         CHAR(40),                     -- libellé opération
+       tint         CHAR(06),                     -- Top Int
+       qtte         CHAR(15),                     -- Quantité
+       cours        CHAR(10),                     -- Cours
+       interet      CHAR(10),                     -- Intérêt Couru
+       mntbrut      CHAR(15),                     -- Montant Brut
+       mch_moncom   CHAR(10),                     -- Comm de bourse (HT)
+       mch_taucom   CHAR(06),                     -- taux de commission
+       mch_montva   CHAR(10),                     -- Tva sur Comm Marché
+       mch_tautva   CHAR(06),                     -- Taux de TVA
+       int_moncom   CHAR(10),                     -- Comm intermédiaire (HT)
+       int_taucom   CHAR(06),                     -- Taux de commission
+       int_montva   CHAR(10),                     -- Tva sur Comm Intermédiaire
+       int_tautva   CHAR(06),                     -- Taux de TVA
+       dep_moncom   CHAR(10),                     -- Comm banquee (HT)
+       dep_taucom   CHAR(06),                     -- taux de commission
+       dep_montva   CHAR(10),                     -- Tva sur Commission baque
+       dep_tautva   CHAR(06),                     -- Taux de TVA
+       tpcvm_moncom CHAR(10),                     -- Comm TPCVM                     -- Commission TPCVM
+       tpcvm_taucom CHAR(06),                     -- Taux de commission
+       tpprf_moncom CHAR(10),                     -- Comm TPPRF                     -- Commission TPPRF
+       tpprf_taucom CHAR(06),                     -- Taux TPPRF
+       frais_mon    CHAR(10),                     -- Frais Fixe (HT)                -- Frais courrier
+       frais_tva    CHAR(10),                     -- TVA sur Frais Fixe
+       frais_tautva CHAR(06),                     -- Taux de TVA
+       tva_interet  CHAR(10),                     -- Tva sur interêt
+       c08_moncom   CHAR(10),                     -- Comm 8
+       c08_taucom   CHAR(06),                     -- taux de commission
+       c08_montva   CHAR(10),                     -- Tva sur Comm
+       c08_tautva   CHAR(06),                     -- Taux de TVA
+       c09_moncom   CHAR(10),                     -- Comm 9
+       c09_taucom   CHAR(06),                     -- Taux de commission
+       c09_montva   CHAR(10),                     -- Tva sur Comm
+       c09_tautva   CHAR(06),                     -- Taux de TVA
+       c10_moncom   CHAR(10),                     -- Comm 10
+       c10_taucom   CHAR(06),                     -- Taux de commission
+       c10_montva   CHAR(10),                     -- Tva sur Comm
+       c10_tautva   CHAR(06),                     -- Taux de TVA
+       mntnet       CHAR(15),                     -- Somme des commissions
+       dope         CHAR(06),                     -- Date Opération
+       dval         CHAR(06),                     -- Date Valeur
+       dech         CHAR(06),                     -- Date Echeance
+       pie          CHAR(11),                     -- Numéro opération
+       uti          CHAR(20),                     -- Utilisateur de saisie
+       cinterne     CHAR(03),                     -- Code Interne
+       cfixe        CHAR(01),                     -- "X"
+       categorie    CHAR(01),                     -- Catégorie
+       nature       CHAR(01),                     -- Nature
+       impot_tau    CHAR(04),                     -- Taux impot
+       impot_mon    CHAR(10),                     -- Montant impot
+       cmp_mon      CHAR(10),                     -- CMP
+       plus_value   CHAR(15),                     -- Plus Value
+       beneficiaire CHAR(50)                      -- Nom et prénom bénéficiaire
+       END RECORD
+DEFINE r_RDJ RECORD                               -- Enregistrement RDJ
+       libc         CHAR(300),                    -- Libellé complémentaire
+       cli          CHAR(9),                      -- Code client
+       bque         CHAR(3),                      -- Code banque figé à 022
+       cvi          CHAR(3),                      -- Code ville agence
+       rib          CHAR(2),                      -- Clé RIB
+       nom          CHAR(53),                     -- Intitulé, nom, et prénom
+       lage         CHAR(30),                     -- Libellé agence
+       adr1         CHAR(30),                     -- Adresse 1 compte sinon adresse client
+       adr2         CHAR(30),                     -- Adresse 2 compte sinon adresse client
+       adr3         CHAR(30),                     -- Adresse 3 compte sinon adresse client
+       ville        CHAR(30),                     -- Ville
+       cpos         CHAR(10),                     -- Code postal
+       cpay         CHAR(3),                      -- Code pays
+       pays         CHAR(30),                     -- Libellé pays
+       natope       CHAR(30),                     -- libelle bkhis sans reference numerique
+       avis         CHAR(1)                       -- Générer avis Oui ou Non
+       END RECORD
+####################################################################################################
+DEFINE g_Lus        INTEGER
+DEFINE g_Ecr        INTEGER
+DEFINE g_Ko         INTEGER
+DEFINE g_Ok         INTEGER
+DEFINE F_liste      CHAR(100)                     -- Nom fichier etat (Liste des opérations)
+DEFINE F_rejet      CHAR(100)                     -- Nom fichier etat des rejets
+DEFINE F_Input      CHAR(100)                     -- Nom fichier provenant de BFI
+DEFINE F_output     CHAR(100)                     -- Nom fichier destiné à RDJ
+DEFINE F_archive    CHAR(100)                     -- Nom fichier archivé
+DEFINE F_Erreur     CHAR(100)                     -- Nom fichier en anomalie archivé
+####################################################################################################
+END GLOBALS
+####################################################################################################
+MAIN
+
+   CALL Get_PrgName()                             -- Determiner nom du module lancé
+
+   LET g_base = FGL_GETENV("DATABASE")
+   DATABASE g_base
+
+   CALL Write_FTrace("D")
+   WHENEVER ERROR CALL F_Erreur
+
+   CALL Parametres()
+   CALL Explore_IN()
+
+   CALL Write_FTrace("F")
+
+END MAIN
+####################################################################################################
+FUNCTION Parametres()
+DEFINE i,j,k INTEGER
+
+-- Date comptable
+   INITIALIZE r_Bknom.* TO NULL
+   SELECT * INTO r_Bknom.* FROM Bknom WHERE age="99000" AND ctab="778" AND cacc="PARAM1"
+   LET g_dco = DATE(r_Bknom.lib1[1,10])
+   IF DATE(g_dco) IS NULL THEN
+      LET g_msgbox = "DATE COMPTABLE INVALIDE [778,PARAM1]."
+      CALL Write_Ftrace("E")
+   END IF
+   LET g_msgbox = "DATE COMPTABLE         : ",g_dco
+   CALL Write_Ftrace("A")
+
+-- Nom fichier etat des rejets
+   SET ISOLATION TO DIRTY READ;
+   INITIALIZE F_Rejet TO NULL
+   SELECT TRIM(lib2) INTO F_Rejet FROM Bknom WHERE age="99000" AND ctab="097" AND cacc="R1688"
+   IF LENGTH(F_Rejet CLIPPED) = 0 THEN
+      LET g_msgbox = "NOM ETAT DES REJETS NON DECLARE [097,R1688]"
+      CALL Write_Ftrace("E")
+   END IF
+
+-- Nom fichier archivé si fichier rejeté
+   SET ISOLATION TO DIRTY READ;
+   INITIALIZE F_Erreur TO NULL
+   SELECT TRIM(lib2) INTO F_Erreur FROM Bknom WHERE age="99000" AND ctab="097" AND cacc="R1689"
+   IF LENGTH(F_Erreur CLIPPED) = 0 THEN
+      LET g_msgbox = "NOM FICHIER ARCHIVE (SI FIC. BFI EN ANOMALIE) NON DECLARE [097,R1689]"
+      CALL Write_Ftrace("E")
+   END IF
+
+-- Nom fichier destiné à RDJ
+   SET ISOLATION TO DIRTY READ;
+   INITIALIZE F_Output TO NULL
+   SELECT TRIM(lib2) INTO F_Output FROM Bknom WHERE age="99000" AND ctab="097" AND cacc="R1680"
+   IF LENGTH(F_Output CLIPPED) = 0 THEN
+      LET g_msgbox = "NOM FICHIER DESTINE A RDJ NON DECLARE [097,R1680]"
+      CALL Write_Ftrace("E")
+   END IF
+
+-- Nom fichier etat liste des opérations
+   SET ISOLATION TO DIRTY READ;
+   INITIALIZE F_Liste TO NULL
+   SELECT TRIM(lib2) INTO F_Liste FROM Bknom WHERE age="99000" AND ctab="097" AND cacc="R1681"
+   IF LENGTH(F_Liste CLIPPED) = 0 THEN
+      LET g_msgbox = "NOM ETAT (LISTE DES OPERATIONS) NON DECLARE [097,R1681]"
+      CALL Write_Ftrace("E")
+   END IF
+
+-- Nom fichier provenant de BFI, et Nom fichier archivé
+   INITIALIZE r_Bknom.* TO NULL
+   SELECT * INTO r_Bknom.* FROM Bknom WHERE age="99000" AND ctab="470" AND cacc="SPTIT044"
+   IF SQLCA.SQLCODE != 0 THEN
+      LET g_msgbox = "CLE [470,SPTIT044] INEXISTANTE"
+      CALL Write_Ftrace("E")
+   END IF
+   IF LENGTH(r_Bknom.lib1 CLIPPED) = 0 THEN
+      LET g_msgbox = "NOM FICHIER PROVENANT DE BFI NON RENSEIGNE [470,SPTIT044,LIB1]"
+      CALL Write_Ftrace("E")
+   END IF
+   IF LENGTH(r_Bknom.lib4 CLIPPED) = 0 THEN
+      LET g_msgbox = "NOM FICHIER D'ARCHIVE DU FICHIER BFI NON RENSEIGNE [470,SPTIT044,lib4]"
+      CALL Write_Ftrace("E")
+   END IF
+   LET F_Input  =r_Bknom.lib1
+   LET F_Archive=r_Bknom.lib4
+
+END FUNCTION
+####################################################################################################
+FUNCTION Explore_IN()
+DEFINE i,j,k  INTEGER
+DEFINE vcmd   CHAR(100)
+DEFINE retour SMALLINT
+
+   --DISPLAY "Fichier                : ",F_input CLIPPED
+   LET vcmd = "test -f ",F_input CLIPPED
+   CALL exec_cmd (vcmd CLIPPED) RETURNING retour
+   IF retour!=0 THEN
+      LET g_msgbox = "PAS DE FICHIER A TRAITER"
+      CALL Write_Ftrace("E")
+   END IF
+
+   LET g_Lus = 0
+   LET g_Ecr = 0
+
+   IF Size_File(F_Input) = 0 THEN
+      LET g_msgbox = "FICHIER VIDE"
+	  CALL Get_FileVide()
+	  
+	  LET g_msgbox = "NOMBRE LUS             : ",g_Lus USING "<<<<<&" 
+      CALL Write_Ftrace("A")
+      LET g_msgbox = "NOMBRE ECRITS          : ",g_Ecr USING "<<<<<&" 
+      CALL Write_Ftrace("A")
+	  
+      CALL Write_FTrace("F")
+   END IF
+
+   IF Ctrl_File() = -1 THEN
+      LET g_msgbox = "FICHIER CONTIENT DES ANOMALIES"
+      CALL Write_Ftrace("E")
+   END IF
+
+   CALL Get_File()
+
+   LET g_msgbox = "NOMBRE LUS             : ",g_Lus USING "<<<<<&"
+   CALL Write_Ftrace("A")
+   LET g_msgbox = "NOMBRE ECRITS          : ",g_Ecr USING "<<<<<&"
+   CALL Write_Ftrace("A")
+
+END FUNCTION
+####################################################################################################
+FUNCTION Ctrl_File()
+DEFINE i    INTEGER
+DEFINE verr CHAR(100)
+DEFINE vrec CHAR(800)
+
+WHENEVER ERROR CONTINUE
+   DROP TABLE Terreur
+   DROP TABLE Tinput
+WHENEVER ERROR CALL F_Erreur
+
+   CREATE TEMP TABLE Tinput
+  (age          CHAR(03),   dev          CHAR(02),   ncp          CHAR(06),   clc          CHAR(02),
+   isin         CHAR(12),   ctit         CHAR(05),   ltit         CHAR(40),   ftit         CHAR(01),
+   ttit         CHAR(20),   tope         CHAR(01),   cope         CHAR(06),   lope         CHAR(40),
+   tint         CHAR(06),   qtte         CHAR(15),   cours        CHAR(10),   interet      CHAR(10),
+   mntbrut      CHAR(15),   mch_moncom   CHAR(10),   mch_taucom   CHAR(06),   mch_montva   CHAR(10),
+   mch_tautva   CHAR(06),   int_moncom   CHAR(10),   int_taucom   CHAR(06),   int_montva   CHAR(10),
+   int_tautva   CHAR(06),   dep_moncom   CHAR(10),   dep_taucom   CHAR(06),   dep_montva   CHAR(10),
+   dep_tautva   CHAR(06),   tpcvm_moncom CHAR(10),   tpcvm_taucom CHAR(06),   tpprf_moncom CHAR(10),
+   tpprf_taucom CHAR(06),   frais_mon    CHAR(10),   frais_tva    CHAR(10),   frais_tautva CHAR(06),
+   tva_interet  CHAR(10),
+   c08_moncom   CHAR(10),   c08_taucom   CHAR(06),   c08_montva   CHAR(10),   c08_tautva   CHAR(06),
+   c09_moncom   CHAR(10),   c09_taucom   CHAR(06),   c09_montva   CHAR(10),   c09_tautva   CHAR(06),
+   c10_moncom   CHAR(10),   c10_taucom   CHAR(06),   c10_montva   CHAR(10),   c10_tautva   CHAR(06),
+   mntnet       CHAR(15),   dope         CHAR(06),   dval         CHAR(06),   dech         CHAR(06),
+   pie          CHAR(11),   uti          CHAR(20),   cinterne     CHAR(03),   cfixe        CHAR(01),
+   categorie    CHAR(01),   nature       CHAR(01),   impot_tau    CHAR(04),   impot_mon    CHAR(10),
+   cmp_mon      CHAR(10),   plus_value   CHAR(15),   beneficiaire CHAR(50),   sequence     serial)
+   WITH NO LOG;
+
+   LET  g_HndBfi = BASE.CHANNEL.CREATE()
+   CALL g_HndBfi.OPENFILE(F_Input,"r")
+   CALL g_HndBfi.SETDELIMITER("")
+
+   WHILE g_HndBfi.read(vrec)
+--    CALL Line2Record(vrec)
+      LET r_BFI.age          = vrec[001,003]   -- CHAR(03),                     -- compte client : Code agence
+      LET r_BFI.dev          = vrec[004,005]   -- CHAR(02),                     -- compte client : Code devise
+      LET r_BFI.ncp          = vrec[006,011]   -- CHAR(06),                     -- compte client : N° de serie
+      LET r_BFI.clc          = vrec[012,013]   -- CHAR(02),                     -- compte client : Clé SGMA
+      LET r_BFI.isin         = vrec[014,025]   -- CHAR(12),                     -- ISIN
+      LET r_BFI.ctit         = vrec[026,030]   -- CHAR(05),                     -- Code Titre
+      LET r_BFI.ltit         = vrec[031,070]   -- CHAR(40),                     -- libellé titre
+      LET r_BFI.ftit         = vrec[071,071]   -- CHAR(01),                     -- Forme du Titre
+      LET r_BFI.ttit         = vrec[072,091]   -- CHAR(20),                     -- TYPE Titre
+      LET r_BFI.tope         = vrec[092,092]   -- CHAR(01),                     -- C=Confirmation,A=Annulation
+      LET r_BFI.cope         = vrec[093,098]   -- CHAR(06),                     -- Type Opération
+      LET r_BFI.lope         = vrec[099,138]   -- CHAR(40),                     -- libellé opération
+      LET r_BFI.tint         = vrec[139,144]   -- CHAR(06),                     -- Top Int
+      LET r_BFI.qtte         = vrec[145,159]   -- CHAR(15),                     -- Quantité
+      LET r_BFI.cours        = vrec[160,169]   -- CHAR(10),                     -- Cour
+      LET r_BFI.interet      = vrec[170,179]   -- CHAR(10),                     -- Intérêt Couru
+      LET r_BFI.mntbrut      = vrec[180,194]   -- CHAR(15),                     -- Montant Brut
+      LET r_BFI.mch_moncom   = vrec[195,204]   -- CHAR(10),                     -- Comm bourse (HT)
+      LET r_BFI.mch_taucom   = vrec[205,210]   -- CHAR(06),                     -- taux de commission
+      LET r_BFI.mch_montva   = vrec[211,220]   -- CHAR(10),                     -- Tva sur Comm bourse
+      LET r_BFI.mch_tautva   = vrec[221,226]   -- CHAR(06),                     -- Taux de TVA
+      LET r_BFI.int_moncom   = vrec[227,236]   -- CHAR(10),                     -- Comm intermediaire (HT)
+      LET r_BFI.int_taucom   = vrec[237,242]   -- CHAR(06),                     -- taux de commission
+      LET r_BFI.int_montva   = vrec[243,252]   -- CHAR(10),                     -- Tva sur Comm Intermédiaire
+      LET r_BFI.int_tautva   = vrec[253,258]   -- CHAR(06),                     -- Taux de TVA
+      LET r_BFI.dep_moncom   = vrec[259,268]   -- CHAR(10),                     -- Comm banque (HT)
+      LET r_BFI.dep_taucom   = vrec[269,274]   -- CHAR(06),                     -- taux de commission
+      LET r_BFI.dep_montva   = vrec[275,284]   -- CHAR(10),                     -- Tva sur Com banque
+      LET r_BFI.dep_tautva   = vrec[285,290]   -- CHAR(06),                     -- Taux de TVA
+      LET r_BFI.tpcvm_moncom = vrec[291,300]   -- CHAR(10),                     -- Comm TPCVM
+      LET r_BFI.tpcvm_taucom = vrec[301,306]   -- CHAR(06),                     -- taux de commission
+      LET r_BFI.tpprf_moncom = vrec[307,316]   -- CHAR(10),                     -- Comm TPPRF
+      LET r_BFI.tpprf_taucom = vrec[317,322]   -- CHAR(02),                     -- Taux TPPRF
+      LET r_BFI.frais_mon    = vrec[323,332]   -- CHAR(10),                     -- Frais Fixe (HT)
+      LET r_BFI.frais_tva    = vrec[333,342]   -- CHAR(10),                     -- TVA sur Frais Fixe
+      LET r_BFI.frais_tautva = vrec[343,348]   -- CHAR(06),                     -- Taux de TVA
+      LET r_BFI.tva_interet  = vrec[349,358]   -- CHAR(10),                     -- TVA sur interêt
+      LET r_BFI.c08_moncom   = vrec[359,368]   -- CHAR(10),                     -- Comm 8             DAF Droit acquis au Fond
+      LET r_BFI.c08_taucom   = vrec[369,374]   -- CHAR(06),                     -- taux de commission
+      LET r_BFI.c08_montva   = vrec[375,384]   -- CHAR(10),                     -- Tva sur Comm
+      LET r_BFI.c08_tautva   = vrec[385,390]   -- CHAR(06),                     -- Taux de TVA
+      LET r_BFI.c09_moncom   = vrec[391,400]   -- CHAR(10),                     -- Comm 9             DRP Droit réseau placeur
+      LET r_BFI.c09_taucom   = vrec[401,406]   -- CHAR(06),                     -- taux de commission
+      LET r_BFI.c09_montva   = vrec[407,416]   -- CHAR(10),                     -- Tva sur Comm
+      LET r_BFI.c09_tautva   = vrec[417,422]   -- CHAR(06),                     -- Taux de TVA
+      LET r_BFI.c10_moncom   = vrec[423,432]   -- CHAR(10),                     -- Comm 10
+      LET r_BFI.c10_taucom   = vrec[433,438]   -- CHAR(06),                     -- taux de commission
+      LET r_BFI.c10_montva   = vrec[439,448]   -- CHAR(10),                     -- Tva sur Comm
+      LET r_BFI.c10_tautva   = vrec[449,454]   -- CHAR(06),                     -- Taux de TVA
+      LET r_BFI.mntnet       = vrec[455,469]   -- CHAR(15),                     -- Montant Net
+      LET r_BFI.dope         = vrec[470,475]   -- CHAR(06),                     -- Date Opération
+      LET r_BFI.dval         = vrec[476,481]   -- CHAR(06),                     -- Date Valeur
+      LET r_BFI.dech         = vrec[482,487]   -- CHAR(06),                     -- Date Echeance
+      LET r_BFI.pie          = vrec[488,498]   -- CHAR(11),                     -- Numéro opération
+      LET r_BFI.uti          = vrec[499,518]   -- CHAR(20),                     -- Utilisateur de saisie
+      LET r_BFI.cinterne     = vrec[519,521]   -- CHAR(03),                     -- Code Interne
+      LET r_BFI.cfixe        = vrec[522,522]   -- CHAR(01),                     -- "X"
+      LET r_BFI.categorie    = vrec[523,523]   -- CHAR(01),                     -- Catégorie
+      LET r_BFI.nature       = vrec[524,524]   -- CHAR(01),                     -- Nature
+      LET r_BFI.impot_tau    = vrec[525,528]   -- CHAR(04),                     -- Taux impot
+      LET r_BFI.impot_mon    = vrec[529,538]   -- CHAR(10),                     -- Montant impot
+      LET r_BFI.cmp_mon      = vrec[539,548]   -- CHAR(10),                     -- CMP
+      LET r_BFI.plus_value   = vrec[549,563]   -- CHAR(15)                      -- Plus Value
+      LET r_BFI.beneficiaire = vrec[564,613]   -- CHAR(50)                      -- Beneficiaire
+      INSERT INTO Tinput VALUES (r_BFI.*,0)
+   END WHILE
+
+-- Contrôle des comptes
+   SELECT a.*,"Compte inexistant                                                " err
+     FROM Tinput a,Bknom b
+    WHERE b.age="99000" AND b.ctab="68Y" AND a.cope=b.cacc AND b.mnt1=0
+      AND NOT EXISTS (SELECT b.* FROM Bkcom b WHERE b.age="00"||a.age AND b.dev="0"||a.dev AND b.ncp="0"||a.ncp)
+     INTO TEMP Terreur WITH NO LOG;
+
+-- Contrôle type opération (C=Confirmation,A=Annulation)
+   INSERT INTO Terreur
+   SELECT a.*,"Sens opération erronée ("||a.tope||")"
+     FROM Tinput a
+    WHERE nvl(a.tope,"") NOT IN ("C","A")
+
+-- Contrôle code opération (Existence dans Bknom ctab="68Y")
+   INSERT INTO Terreur
+   SELECT a.*,"Code opération non prévu ("||a.cope||")"
+     FROM Tinput a
+    WHERE a.cope NOT IN (SELECT b.cacc FROM Bknom b WHERE b.age="99000" AND b.ctab="68Y")
+
+-- Contrôle combine type opération+code opération (C+COPE ou A+COPE)
+   INSERT INTO Terreur
+   SELECT a.*,"Incohérence sens et code opération (C)"
+     FROM Tinput a
+    WHERE a.tope = "C" AND a.cope IN (SELECT b.cacc FROM Bknom b WHERE b.age="99000" AND b.ctab="68Y" AND nvl(b.lib2,"")="N")
+
+   INSERT INTO Terreur
+   SELECT a.*,"Incohérence sens et code opération (A)"
+     FROM Tinput a
+    WHERE a.tope = "A" AND a.cope IN (SELECT b.cacc FROM Bknom b WHERE b.age="99000" AND b.ctab="68Y" AND nvl(b.lib3,"")="N")
+
+-- Contrôle zones numériques
+   INSERT INTO Terreur
+   SELECT a.*,"Quantité non numérique"
+     FROM Tinput a
+    WHERE a.qtte  NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Cours non numérique"
+     FROM Tinput a
+    WHERE a.cours NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Montant brut non numérique"
+     FROM Tinput a
+    WHERE a.mntbrut NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]";
+
+-- Contrôles des montants et taux de commission bourse
+   INSERT INTO Terreur
+   SELECT a.*,"Commission de bourse non numérique"
+     FROM Tinput a
+    WHERE a.mch_moncom NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Taux de commission de bourse non numérique"
+     FROM Tinput a
+    WHERE a.mch_taucom NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Montant TVA sur commission de bourse non numérique"
+     FROM Tinput a
+    WHERE a.mch_montva NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Taux de TVA sur commission de bourse non numérique"
+     FROM Tinput a
+    WHERE a.mch_tautva NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9]";
+
+-- Contrôles des montants et taux de commission intermediaire
+   INSERT INTO Terreur
+   SELECT a.*,"Commission d'intermediaire non numérique"
+     FROM Tinput a
+    WHERE a.int_moncom NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Taux de commission d'intermediaire non numérique"
+     FROM Tinput a
+    WHERE a.int_taucom NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Montant TVA sur commission d'intermediaire non numérique"
+     FROM Tinput a
+    WHERE a.int_montva NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Taux de TVA sur commission d'intermediaire non numérique"
+     FROM Tinput a
+    WHERE a.int_tautva NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9]";
+
+-- Contrôles des montants et taux de commission de banque
+   INSERT INTO Terreur
+   SELECT a.*,"Commission de banque non numérique"
+     FROM Tinput a
+    WHERE a.dep_moncom NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Taux de commission de banque non numérique"
+     FROM Tinput a
+    WHERE a.dep_taucom NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Montant TVA sur commission de banque non numérique"
+     FROM Tinput a
+    WHERE a.dep_montva NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Taux de TVA sur commission de banque non numérique"
+     FROM Tinput a
+    WHERE a.dep_tautva NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9]";
+
+-- Contrôles des montants et taux de commission TPCVM
+   INSERT INTO Terreur
+   SELECT a.*,"Commission TPCVM non numérique"
+     FROM Tinput a
+    WHERE a.tpcvm_moncom NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Taux de commission TPCVM non numérique"
+     FROM Tinput a
+    WHERE a.tpcvm_taucom NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9]";
+
+-- Contrôles des montants et taux de commission TPPRF
+   INSERT INTO Terreur
+   SELECT a.*,"Commission TPPRF non numérique"
+     FROM Tinput a
+    WHERE a.tpprf_moncom NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Taux de commission TPPRF non numérique"
+     FROM Tinput a
+    WHERE a.tpprf_taucom NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9]";
+
+-- Contrôles des montants et taux de commission TPPRF
+   INSERT INTO Terreur
+   SELECT a.*,"Frais fixe non numérique"
+     FROM Tinput a
+    WHERE a.frais_mon NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"TVA sur frais fixe non numérique"
+     FROM Tinput a
+    WHERE a.frais_tva NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Taux TVA sur frais fixe non numérique"
+     FROM Tinput a
+    WHERE a.frais_tautva NOT MATCHES "[0-9][0-9][0-9][0-9][0-9][0-9]";
+
+-- Contrôle pièce comptable
+   INSERT INTO Terreur
+   SELECT a.*,"Numéro pièce comptable non renseigné"
+     FROM Tinput a
+    WHERE nvl(a.pie,"") = "";
+
+   INSERT INTO Terreur
+   SELECT a.*,"Numéro pièce comptable en double"
+     FROM Tinput a
+    WHERE nvl(a.pie,"") != ""
+      AND a.pie IN (SELECT b.pie FROM Tinput b WHERE nvl(b.pie,"") != "" GROUP BY b.pie HAVING count(*) > 1);
+
+{
+   INSERT INTO Terreur
+   SELECT a.*,"Compte TPCVM non paramétré pour le taux " || CAST(CAST(tpcvm_taucom as INTEGER)/100 AS DECIMAL(5,2))
+     FROM Tinput a
+    WHERE CAST(tpcvm_taucom as INTEGER) != 0
+      AND CAST(tpcvm_taucom as INTEGER) NOT IN (SELECT CAST(cacc AS INTEGER) FROM Bknom WHERE ctab="689" AND age="99000");
+}
+
+   LET i = 0
+   SELECT count(*) INTO i FROM Terreur
+   IF i = 0 THEN
+      RETURN 0
+   END IF
+
+-- Edition etat des rejets
+   START REPORT Etat_Rejets TO F_rejet
+   DECLARE CurErreur CURSOR FOR SELECT * FROM Terreur ORDER BY sequence
+   FOREACH CurErreur INTO r_BFI.*,i,verr
+      OUTPUT TO REPORT Etat_Rejets(i,verr)
+   END FOREACH
+   FINISH REPORT Etat_Rejets
+
+   RETURN -1
+
+END FUNCTION
+####################################################################################################
+REPORT Etat_Rejets(vseq,verr)
+DEFINE vseq INTEGER
+DEFINE verr CHAR(65)
+DEFINE vfin SMALLINT
+
+OUTPUT
+   LEFT   MARGIN 0
+   RIGHT  MARGIN 0
+   TOP    MARGIN 0
+   BOTTOM MARGIN 0
+   PAGE   LENGTH 66
+FORMAT
+PAGE HEADER
+   PRINT COLUMN 1,"SGMB                                                       REFERENCE: SPTIT044"
+   PRINT COLUMN 1,"                                                           EDITE LE : ",TODAY USING "DD/MM/YYYY"
+   SKIP 1 LINE
+
+   PRINT COLUMN 1,"                                ETAT DES REJETS"
+   SKIP 1 LINE
+   PRINT COLUMN 1,"NOM FICHIER : ",F_input CLIPPED
+   PRINT COLUMN 1,"*----------*-------------------------------------------------------------------*"
+   PRINT COLUMN 1,"| N° LIGNE |                            MOTIF REJET                            |"
+   PRINT COLUMN 1,"*----------*-------------------------------------------------------------------*"
+ON EVERY ROW
+   LET vfin = 0
+   PRINT COLUMN 1,"| ",vseq USING "#######&"," | ",verr ," |"
+ON LAST ROW
+   LET vfin = 1
+   PRINT COLUMN 1,"*----------*-------------------------------------------------------------------*"
+PAGE TRAILER
+   IF vfin = 0 THEN
+      PRINT COLUMN 1,"*----------*-------------------------------------------------------------------*"
+   ELSE
+      SKIP 1 LINES
+   END IF
+
+END REPORT
+####################################################################################################
+FUNCTION Bkhisl_Lib()
+DEFINE vlib CHAR(300)
+DEFINE vqte INTEGER
+
+   LET vqte=r_BFI.qtte
+   CALL Select_Bknom("68Y",r_BFI.cope)
+   LET vlib=r_Bknom.lib1 CLIPPED," ",r_BFI.pie USING "<<<<<<&","."
+   LET vlib=vlib CLIPPED," QUANTITE ",r_BFI.qtte[1,12] USING "<<<<<<<<<<<&"
+   IF r_BFI.qtte[13,15]!="000" THEN
+      LET vlib=vlib CLIPPED,",",r_BFI.qtte[13,15]
+   END IF
+   IF LENGTH(r_BFI.ltit CLIPPED)!=0 THEN
+      LET vlib=vlib CLIPPED," ",r_BFI.ltit CLIPPED
+   END IF
+   LET vlib = vlib CLIPPED,"."
+   IF LENGTH(r_BFI.ncp CLIPPED)=0 THEN
+      LET vlib=vlib CLIPPED," TAXE"
+   ELSE
+      LET vlib=vlib CLIPPED," COMMISSION & TAXE"
+   END IF
+   LET vlib=vlib CLIPPED," ",(r_BFI.mntnet/100) USING "<<<<<<<<<<<&.&&"," DHS."
+   IF r_BFI.tope = "A" THEN
+      LET vlib="ANNULATION ",vlib CLIPPED
+   END IF
+
+   RETURN UPSHIFT(vlib)
+
+END FUNCTION
+####################################################################################################
+FUNCTION Bkhis_Lib()
+DEFINE vlib CHAR(30)
+
+   CALL Select_Bknom("68Y",r_BFI.cope)
+   LET vlib = r_Bknom.lib4 CLIPPED," ",r_BFI.pie USING "<<<<<<&"
+   IF r_BFI.tope = "A" THEN
+      LET vlib = r_Bknom.lib5 CLIPPED," ",r_BFI.pie USING "<<<<<<&"
+   END IF
+
+   RETURN UPSHIFT(vlib)
+
+END FUNCTION
+####################################################################################################
+FUNCTION Nature_ope()
+DEFINE vlib CHAR(30)
+
+   CALL Select_Bknom("68Y",r_BFI.cope)
+   LET vlib = r_Bknom.lib1 CLIPPED
+-- LET vlib = r_Bknom.lib4 CLIPPED," ",r_Bknom.lib5 CLIPPED
+-- IF r_BFI.tope = "A" THEN
+--    IF LENGTH(vlib CLIPPED)+7 > 30 THEN
+--       LET vlib = "ANN. ",vlib
+--    ELSE
+--       LET vlib = "ANNUL. ",vlib
+--    END IF
+-- END IF
+
+   RETURN UPSHIFT(vlib)
+
+END FUNCTION
+####################################################################################################
+FUNCTION Get_File()
+DEFINE i       INTEGER
+DEFINE v_Bknom RECORD LIKE Bknom.*
+
+   START REPORT OUTPUT_RDJ TO F_Output
+   START REPORT Report_Lst TO F_Liste
+
+   DECLARE Enrichi CURSOR FOR
+      SELECT * FROM Tinput a,Bknom b
+       WHERE a.cope=b.cacc AND b.age="99000" AND b.ctab="68Y"
+       ORDER BY a.sequence
+   FOREACH Enrichi INTO r_BFI.*,i,v_Bknom.*
+      INITIALIZE r_RDJ.* TO NULL
+      LET g_Lus = g_Lus + 1
+      CALL Select_Delta(r_BFI.age,r_BFI.dev,r_BFI.ncp)
+      LET r_BFI.lope  = Bkhis_Lib()
+      LET r_RDJ.libc  = Bkhisl_Lib()
+      LET r_RDJ.cli   = r_Bkcom.cli
+      LET r_RDJ.bque  = "022"
+      LET r_RDJ.cvi   = r_Bkbqe.cville USING "&&&"
+      LET r_RDJ.rib   = r_Bkcom.ribdec
+      LET r_RDJ.lage  = r_Bk001_lib1
+      IF r_Bkcli.lib<"11" THEN
+         LET r_RDJ.nom=r_Bk036_lib1 CLIPPED
+         LET r_RDJ.Nom= r_RDJ.nom CLIPPED," ",r_Bkcli.nom
+         LET r_RDJ.Nom= r_RDJ.nom CLIPPED," ",r_Bkcli.pre
+      ELSE
+         LET r_RDJ.Nom=r_Bkcli.nom
+      END IF
+      IF  LENGTH(r_Bkcli.nom CLIPPED) = 0
+      AND LENGTH(r_Bkcli.pre CLIPPED) = 0 THEN
+         LET r_RDJ.Nom   = r_Bkcom.inti
+      END IF
+      LET r_RDJ.adr1  = r_Bkacp.adr1
+      LET r_RDJ.adr2  = r_Bkacp.adr2
+      LET r_RDJ.adr3  = r_Bkacp.adr3
+      LET r_RDJ.adr3  = r_Bkacp.adr3
+      LET r_RDJ.ville = r_Bkacp.ville
+      LET r_RDJ.cpos  = r_Bkacp.cpos
+      LET r_RDJ.cpay  = r_Bkacp.cpay
+      LET r_RDJ.pays  = r_Bk040_lib1
+      LET r_RDJ.natope= Nature_ope()
+      LET r_RDJ.avis  = "N"
+      IF v_Bknom.mnt2=1 THEN
+         LET r_RDJ.avis  = "O"
+      END IF
+      OUTPUT TO REPORT OUTPUT_RDJ()
+      OUTPUT TO REPORT Report_Lst()
+      LET g_Ecr = g_Ecr + 1
+   END FOREACH
+   FINISH REPORT OUTPUT_RDJ
+   FINISH REPORT Report_Lst
+
+END FUNCTION
+####################################################################################################
+FUNCTION Get_FileVide()
+DEFINE i       INTEGER
+DEFINE v_Bknom RECORD LIKE Bknom.*
+
+   START REPORT OUTPUT_RDJ TO F_Output
+   START REPORT Report_Lst TO F_Liste
+   FINISH REPORT OUTPUT_RDJ
+   FINISH REPORT Report_Lst
+
+END FUNCTION
+####################################################################################################
+REPORT OUTPUT_RDJ()
+
+OUTPUT
+PAGE   LENGTH 1
+LEFT   MARGIN 0
+RIGHT  MARGIN 0
+TOP    MARGIN 0
+BOTTOM MARGIN 0
+
+FORMAT
+
+ON EVERY ROW
+   PRINT COLUMN 1,r_BFI.*,r_RDJ.*
+
+END REPORT
+####################################################################################################
+REPORT Report_Lst()
+DEFINE vend SMALLINT
+DEFINE vnom CHAR(37)
+
+OUTPUT
+   LEFT   MARGIN 0
+   RIGHT  MARGIN 0
+   TOP    MARGIN 0
+   BOTTOM MARGIN 0
+   PAGE   LENGTH 66
+FORMAT
+PAGE HEADER
+   LET vEnd = 0
+   PRINT COLUMN 01," SGMB                                                                                                                         REFERENCE : SPTIT044"
+   PRINT COLUMN 01,"                                                                                                                              EDITE LE ",TODAY USING "DD/MM/YYYY"
+   PRINT COLUMN 01,"                                                            LISTE DES OPERATIONS TITRES"
+   SKIP 1 LINE
+   PRINT COLUMN 01," *---------------*---------------------------------------*------------*------------*-------------*-------*--------*-----------*------------------*"
+   PRINT COLUMN 01," |    NUMERO     |    NOM ET PRENOM OU RAISON SOCIALE    |    DATE    |    DATE    |  REFERENCE  | FORME |  CODE  |   CODE    |     QUANTITE     |"
+   PRINT COLUMN 01," |    COMPTE     |                CLIENT                 | OPERATION  |   VALEUR   |             |       | VALEUR | OPERATION |                  |"
+   PRINT COLUMN 01," *---------------*---------------------------------------*------------*------------*-------------*-------*--------*-----------*------------------*"
+
+ON EVERY ROW
+   LET vnom = r_Bkcli.nom CLIPPED," ",r_Bkcli.pre
+   IF LENGTH(vnom CLIPPED) = 0 THEN
+      LET vnom = r_Bkcom.inti
+   END IF
+   PRINT COLUMN 01," | ",r_BFI.age," ",r_BFI.dev," ",r_BFI.ncp,
+                   " | ",vnom,
+                   " | ",DATE(r_BFI.dope) ,
+                   " | ",DATE(r_BFI.dval),
+                   " | ",r_BFI.pie,
+                   " | ","  ",r_BFI.ftit,"  ",
+                   " | ",r_BFI.ctit," ",
+                   " | "," ",r_BFI.cope,"  ",
+                   " | ",r_BFI.qtte USING "###########&.&&&",
+                   " |"
+
+ON LAST ROW
+   LET vEnd = 1
+   PRINT COLUMN 01," *---------------*---------------------------------------*------------*------------*-------------*-------*--------*-----------*----------*"
+
+PAGE TRAILER
+   IF vend = 0 THEN
+      PRINT COLUMN 01," *---------------*---------------------------------------*------------*------------*-------------*-------*--------*-----------*----------*"
+   ELSE
+      SKIP 1 LINE
+   END IF
+
+END REPORT
+####################################################################################################
+FUNCTION Select_Delta(vage,vdev,vncp)
+DEFINE vage LIKE Bkcom.age
+DEFINE vdev LIKE Bkcom.dev
+DEFINE vncp LIKE Bkcom.ncp
+
+   INITIALIZE r_Bkcom.*,r_Bkcli.*,r_Bkacp.*,r_Bkadcli.*,r_Bk001_lib1,r_Bk036_lib1 TO NULL
+   IF LENGTH(vage CLIPPED)=0 THEN
+      RETURN
+   END IF
+
+   LET vage = "00",vage
+   LET vdev =  "0",vdev
+   LET vncp =  "0",vncp
+
+   EXECUTE IMMEDIATE "SET ISOLATION TO DIRTY READ"
+
+   SELECT * INTO r_Bkcom.*,r_Bkbqe.*,r_Bkacp.*,r_Bkcli.*
+     FROM Bkcom a,Bkbqe b,outer Bkacp c,outer Bkcli d
+    WHERE (a.age=vage AND a.dev=vdev AND a.ncp=vncp)
+      AND (a.age=b.guib AND b.age="00022" AND b.etab="00022")
+      AND (a.age=c.age AND a.dev=c.dev AND a.ncp=c.ncp AND a.suf=c.suf AND c.typ="C")
+      AND (a.cli=d.cli)
+
+-- Adresse compte inexistante
+   IF LENGTH(r_Bkacp.age CLIPPED) = 0 THEN
+      IF LENGTH(r_Bkcli.cli CLIPPED) != 0 THEN
+      -- Adresse client
+         CALL Select_Bkadcli(r_Bkcli.cli,"D")
+         IF SQLCA.SQLCODE = 0 THEN
+            LET r_Bkacp.adr1  = r_Bkadcli.adr1
+            LET r_Bkacp.adr2  = r_Bkadcli.adr2
+            LET r_Bkacp.adr3  = r_Bkadcli.adr3
+            LET r_Bkacp.ville = r_Bkadcli.ville
+            LET r_Bkacp.cpay  = r_Bkadcli.cpay
+            LET r_Bkacp.cpos  = r_Bkadcli.cpos
+         END IF
+      END IF
+   END IF
+
+-- Intitulé agence
+   CALL Select_Bknom("001",r_Bkcom.age)   LET r_Bk001_lib1 = r_Bknom.lib1
+-- Intitulé client
+   CALL Select_Bknom("036",r_Bkcli.lib)   LET r_Bk036_lib1 = r_Bknom.lib1
+-- Intitulé pays
+   CALL Select_Bknom("040",r_Bkacp.cpay)  LET r_Bk040_lib1 = r_Bknom.lib1
+
+END FUNCTION
+####################################################################################################
+FUNCTION Select_Bknom(vctab,vcacc)
+DEFINE vctab LIKE Bknom.ctab
+DEFINE vcacc LIKE Bknom.cacc
+
+   INITIALIZE r_Bknom.* TO NULL
+   SELECT * INTO r_Bknom.* FROM Bknom WHERE age="99000" AND ctab=vctab AND cacc=vcacc
+
+END FUNCTION
+####################################################################################################
+FUNCTION Select_Bkadcli(vcli,vtyp)
+DEFINE vcli LIKE Bkadcli.cli
+DEFINE vtyp LIKE Bkadcli.typ
+
+   INITIALIZE r_Bkadcli.* TO NULL
+   SELECT * INTO r_Bkadcli.* FROM Bkadcli WHERE cli=vcli AND typ=vtyp
+
+END FUNCTION
+####################################################################################################
+FUNCTION F_RollBack()
+DEFINE vstatus INTEGER
+
+   LET vstatus  = status
+   LET g_msgbox = "Erreur:" || vstatus || ". \n",ERR_GET(vstatus)
+   ROLLBACK WORK;
+   CALL Write_FTrace("E")
+
+END FUNCTION
+####################################################################################################
+FUNCTION F_Erreur()
+DEFINE CodeStat INTEGER
+
+   LET CodeStat = status
+   LET g_msgbox = "Erreur:" || CodeStat,". \n",ERR_GET(CodeStat)
+   CALL Write_FTrace("E")
+
+END FUNCTION
+####################################################################################################
+FUNCTION Ps_Process()
+DEFINE hndps BASE.CHANNEL
+DEFINE vcmd  STRING
+DEFINE i     INTEGER
+
+   LET i = 0
+   LET vcmd = "ps -ef |grep ",g_prgname CLIPPED," |grep -v grep"
+   LET hndps = base.Channel.create()
+   CALL hndps.setdelimiter("")
+   CALL hndps.openpipe(vcmd,"r")
+   WHILE hndps.read(vcmd)
+      LET i=i+1
+   END WHILE
+   IF i > 1 THEN
+      DISPLAY "Programme déjà lancé"
+      EXIT PROGRAM
+   END IF
+
+END FUNCTION
+####################################################################################################
+FUNCTION Get_PrgName()
+DEFINE varg CHAR(256)
+DEFINE i,j  INTEGER
+
+   LET varg = ARG_VAL(0)
+   LET j    = LENGTH(varg CLIPPED)
+   FOR i = j TO 1 STEP -1
+      IF varg[i,i]= "/" THEN EXIT FOR END IF
+   END FOR
+   LET g_prgname = varg[i+1,j]
+   LET varg      = g_prgname CLIPPED
+   LET g_prgname = ""
+   LET j    = LENGTH(varg CLIPPED)
+   FOR i = 1 TO j
+      IF varg[i,i] = "." THEN EXIT FOR END IF
+      LET g_prgname = g_prgname CLIPPED,varg[i,i]
+   END FOR
+
+   LET g_prgname = g_prgname CLIPPED
+
+END FUNCTION
+####################################################################################################
+FUNCTION Write_Ftrace(v_etat)
+DEFINE v_etat    CHAR(1)
+DEFINE v_nomfile CHAR(80)
+
+   LET g_hhmmss = TIME
+   LET g_ddmmyy = TODAY
+   CASE v_etat
+   WHEN "D"
+      LET g_base = fgl_GETENV("DATABASE")
+      DATABASE g_base
+      IF NUM_ARGS() = 0 THEN                   ## recuperation du code utilisateur
+         LET g_uti = "AUTO"                    ## a partir de la ligne de commande
+      ELSE                                     ## si non fournie, on affecte XXXX
+        LET g_uti = ARG_VAL(1)                 ##
+      END IF                                   ##
+      LET g_datedeb = g_ddmmyy
+      LET g_heurdeb = g_hhmmss[1,2],g_hhmmss[4,5],g_hhmmss[7,8]
+      LET v_nomfile = "/tmp/trace",g_prgname CLIPPED
+      LET g_hndlog = base.Channel.create()
+      CALL g_hndlog.setdelimiter("")
+
+      CALL g_hndlog.openfile(v_nomfile,"w")
+      LET g_msgbox = "======================================================================"
+      CALL g_hndlog.write(g_msgbox[1,70])
+      --DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "DEBUT DU PROGRAMME ",g_prgname[1,24],"        ",g_ddmmyy," ",g_hhmmss
+      CALL g_hndlog.write(g_msgbox[1,70])
+      --DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "======================================================================"
+      CALL g_hndlog.write(g_msgbox[1,70])
+      --DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "BASE DE DONNEES        : ",g_base
+      CALL g_hndlog.write(g_msgbox[1,70])
+      --DISPLAY g_msgbox[1,70]
+      CALL Insert_Sgtrace(v_etat)
+   WHEN "F"
+      LET g_msgbox = "======================================================================"
+      CALL g_hndlog.write(g_msgbox[1,70])
+      --DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "FIN NORMALE DU PROGRAMME ",g_prgname[1,24],"  ",g_ddmmyy," ",g_hhmmss
+      CALL g_hndlog.write(g_msgbox[1,70])
+      --DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "======================================================================"
+      CALL g_hndlog.write(g_msgbox[1,70])
+      --DISPLAY g_msgbox[1,70]
+      CALL g_hndlog.CLOSE()
+      CALL Insert_Sgtrace(v_etat)
+      CALL MAJ_Trace_Global()
+   WHEN "E"
+      IF SQLCA.SQLCODE >= 0 THEN
+         CALL Insert_Sgtrace(v_etat)
+      END IF
+      CALL g_hndlog.write(g_msgbox[1,70])
+
+      --DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "======================================================================"
+      CALL g_hndlog.write(g_msgbox[1,70])
+      --DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "FIN ANORMALE DU PROGRAMME ",g_prgname[1,24]," ",g_ddmmyy," ",g_hhmmss
+      CALL g_hndlog.write(g_msgbox[1,70])
+      --DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "======================================================================"
+      CALL g_hndlog.write(g_msgbox[1,70])
+      --DISPLAY g_msgbox[1,70]
+      CALL g_hndlog.CLOSE()
+      CALL MAJ_Trace_Global()
+   WHEN "W"
+      CALL g_hndlog.write(g_msgbox[1,70])
+      --DISPLAY g_msgbox[1,70]
+      CALL Insert_Sgtrace(v_etat)
+   OTHERWISE
+      CALL g_hndlog.write(g_msgbox[1,70])
+      --DISPLAY g_msgbox[1,70]
+   END CASE
+   IF v_etat = "E" OR v_etat = "F" THEN
+      IF v_etat = "E" THEN
+         CALL Delete_File()
+         CALL Save_File(0)
+      	 DISPLAY "1"
+         EXIT PROGRAM(1)
+      ELSE
+         CALL Save_File(1)
+         --CALL Script()
+      	 DISPLAY "0"
+         EXIT PROGRAM(0)
+      END IF
+   END IF
+
+END FUNCTION
+####################################################################################################
+FUNCTION Insert_SgTrace(v_etat)
+DEFINE v_etat    CHAR(1)
+DEFINE v_heurfin CHAR(6)
+DEFINE v_datefin DATE
+DEFINE v_heure   CHAR(10)
+
+   LET v_datefin = TODAY
+   LET v_heure   = TIME
+   LET v_heurfin = v_heure[1,2],v_heure[4,5],v_heure[7,8]
+   CASE v_etat
+   WHEN "D"
+      LET g_msgbox = "DEBUT NORMAL"
+      LET v_datefin  = ""
+      LET v_heurfin  = ""
+   WHEN "F"
+      LET g_msgbox = "FIN NORMALE"
+   END CASE
+   INSERT INTO sgtrace VALUES
+   (g_prgname,g_datedeb,g_heurdeb,v_datefin,v_heurfin,g_uti,v_etat,g_msgbox);
+
+END FUNCTION
+####################################################################################################
+FUNCTION MAJ_Trace_Global()
+DEFINE v_ftrace CHAR(80)
+DEFINE v_gtrace CHAR(80)
+DEFINE v_run    CHAR(250)
+
+   WHENEVER ERROR CONTINUE
+   LET v_ftrace = "/tmp/trace",g_prgname CLIPPED
+   LET v_gtrace = "XXXXXXXXXX"
+   SELECT lib2 INTO v_gtrace FROM Bknom
+    WHERE ctab = "097" AND age = "99000" AND cacc = "R000"
+   IF v_gtrace IS NULL THEN LET v_gtrace = "XXXXXXXXXX" END IF
+   IF v_gtrace != "XXXXXXXXXX" THEN
+      LET v_run = "cat ",v_ftrace CLIPPED," >> ",v_gtrace CLIPPED," 2>/dev/null"
+      run v_run
+   END IF
+
+END FUNCTION
+####################################################################################################
+FUNCTION Script()
+DEFINE vexec  CHAR(200)
+DEFINE vrun   SMALLINT
+
+   LET vexec = "$BANK/bin/ex-",g_prgname CLIPPED,".ksh &"
+   LET vrun  = exec_cmd (vexec CLIPPED)
+
+END FUNCTION
+####################################################################################################
+FUNCTION Size_File(vFile)
+DEFINE hndLs base.channel
+DEFINE vLs   STRING
+DEFINE vFile STRING
+DEFINE vsize INTEGER
+
+   LET vls = "ls -l '",vFile CLIPPED,"' | awk '{print $5}' 2>/dev/null"
+   LET hndLs = base.Channel.create()
+   CALL hndLs.OPENPIPE(vLs CLIPPED,"r")
+   CALL hndLs.SETDELIMITER("")
+   WHILE hndLs.READ(vsize)
+   END WHILE
+
+   RETURN vsize
+
+END FUNCTION
+####################################################################################################
+FUNCTION Save_File(Flag)
+DEFINE Flag   INTEGER
+DEFINE vcmd   STRING
+DEFINE hhmmss CHAR(10)
+
+   LET hhmmss = TIME
+
+-- Archive si OK
+   IF Flag=1 THEN
+      LET vcmd  = "mv ",F_Input CLIPPED," ",F_Archive CLIPPED,"_",g_dco USING "YYYYMMDD","_",
+                  hhmmss[1,2],hhmmss[4,5],hhmmss[7,8]," 2>/dev/null"
+   ELSE
+      LET vcmd  = "mv ",F_Input CLIPPED," ",F_Erreur CLIPPED,"_",g_dco USING "YYYYMMDD","_",
+                  hhmmss[1,2],hhmmss[4,5],hhmmss[7,8]," 2>/dev/null"
+   END IF
+
+   run vcmd CLIPPED
+
+END FUNCTION
+####################################################################################################
+FUNCTION Delete_File()
+DEFINE vcmd STRING
+
+   LET vcmd  = "rm ",F_output CLIPPED," 2>/dev/null"
+   run vcmd CLIPPED
+   LET vcmd  = "rm ",F_Liste CLIPPED," 2>/dev/null"
+   run vcmd CLIPPED
+
+END FUNCTION
+####################################################################################################
+{
+TYPE TypeMontant RECORD
+     moncom      CHAR(10),             -- Montant commission d'intermediaire (HT)
+     taucom      CHAR(6),              -- Taux de commission intermediaire
+     montva      CHAR(10),             -- TVA sur commission intermediaire
+     tautva      CHAR(6)               -- Taux TVA sur commission intermediaire
+     END RECORD
+
+Description détaillée de l'enregistrement provenant de BFI
+DEFINE r_BFI RECORD
+          age           CHAR(3),              -- Compte client
+          dev           CHAR(2),
+          ncp           CHAR(6),
+          clc           CHAR(2),
+          isin          CHAR(12),
+          Titre RECORD
+            code        CHAR(5),
+            lib         CHAR(40),
+            forme       CHAR(1),
+            type        CHAR(20)
+          END RECORD,
+          Operation RECORD
+            type        CHAR(6),              -- Type Opération défini au niveau SGMB
+            lib         CHAR(40)              -- libellé opération
+          END RECORD,
+          tint          CHAR(6),              -- Top Int à voir dans la base (table typbqe)
+          qtte          CHAR(10),             -- Quantité
+          cour          CHAR(10),             -- Cours
+          intc          CHAR(10),             -- Intérêt Couru
+          mbrut         CHAR(15),             -- Montant Brut
+          Marche        TypeMontant,
+          Intermediaire TypeMontant,
+          Depositaire   TypeMontant,
+          TPCVM RECORD
+             com        CHAR(10),             -- Montant commission TPCVM
+             tau        CHAR(6)               -- Taux de commission TPCVM
+          END RECORD,
+          TPPRF RECORD
+             com        CHAR(10),             -- Montant commission TPPRF
+             tau        CHAR(2)               -- Taux de commission TPPRF
+          END RECORD,
+          FraisFixe RECORD
+             mon        CHAR(10),             -- Montant Frais fixe HT
+             tva        CHAR(10),             -- TVA sur Frais fixe
+             tau        CHAR(6)               -- Taux sur Frais fixe
+          END RECORD,
+          Commission08  TypeMontant,
+          Commission09  TypeMontant,
+          Commission10  TypeMontant,
+          mnet          CHAR(15),             -- Montant net
+          dope          CHAR(6),              -- Date opération
+          dval          CHAR(6),              -- Date valeur
+          dech          CHAR(6),              -- Date échéance
+          cle           CHAR(11),             -- Numéro d'opération
+          cuti          CHAR(20),             -- Utilisateur de saisie
+          topint        CHAR(3),              -- Code interne
+          fixe          CHAR(1),              -- Figé à "X"
+          cat           CHAR(1),              -- Catégorie
+          nat           CHAR(1),              -- Nature
+          Impot RECORD
+             tau        CHAR(4),              -- Taux impot
+             mon        CHAR(10)              -- Montant impot
+          END RECORD,
+          cmp           CHAR(10),
+          pvalue        CHAR(15)
+          END RECORD
+}
