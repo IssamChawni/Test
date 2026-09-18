@@ -1,0 +1,1473 @@
+####################################################################################################
+# Programme   : spload72                                                                           #
+# Type        : Batch                                                                              #
+# Titre       : Exploration repertoire des lots comptables et intégration dans Bkmvr               #
+# Réalisé par : NSI - Nassiri Jalal                                                                #
+####################################################################################################
+SCHEMA bank
+####################################################################################################
+GLOBALS
+####################################################################################################
+# Variables utilisées dans la fonction gestion de trace                                            #
+####################################################################################################
+DEFINE g_uti       LIKE evuti.cuti                         -- Code utilisateur
+DEFINE g_dco       DATE                                    -- Date comptable
+DEFINE g_msgbox    CHAR(70)
+DEFINE g_base      CHAR(50)
+DEFINE g_hhmmss    CHAR(10)
+DEFINE g_ddmmyy    DATE
+DEFINE g_prgname   CHAR(24)
+DEFINE g_datedeb   DATE
+DEFINE g_heurdeb   CHAR(6)
+DEFINE g_sqlprepar VARCHAR(5000)
+DEFINE g_hndLs,g_hndwc,g_hndIn,g_hndlog base.channel
+####################################################################################################
+DEFINE r_Bknom     RECORD LIKE Bknom.*                     -- Table des tables
+DEFINE r_Bk460     RECORD LIKE Bknom.*                     -- Table paramétrage des modules
+DEFINE r_sgmvr     RECORD LIKE sgmvr.*                     -- Table des mouvements comptables v7
+DEFINE r_Bkmvrl    RECORD LIKE Bkmvrl.*                    -- Table des libellés complémentaires
+####################################################################################################
+DEFINE Dir_In      CHAR(100)                               -- Repertoire des lots comptables
+DEFINE Dir_Arc     CHAR(100)                               -- Repertoire d'archivage
+DEFINE Dir_Rej     CHAR(100)                               -- Repertoire d'archivage des rejets
+DEFINE Dir_Err     CHAR(100)                               -- Repertoire des rejets
+DEFINE Dir_Etat    CHAR(100)                               -- Repertoire des etats
+####################################################################################################
+DEFINE g_date      CHAR(10)                                -- Date comptable à forcer
+DEFINE g_file      CHAR(100)                               -- Nom fichier à traiter
+DEFINE g_cacc      CHAR(10)                                -- Nom du module 
+DEFINE g_nlot      CHAR(6)                                 -- Numéro de lot
+DEFINE g_nbre      INTEGER                                 -- Nombre d'enregistrement ds le fichier
+DEFINE File_Err    CHAR(100)                               -- Fichier des anomalies
+DEFINE File_Ecr    CHAR(100)                               -- Fichier etat des ecritures comptables
+DEFINE Etat_Ko     CHAR(100)                               -- Etat recap des fichiers non traités
+DEFINE Etat_Ok     CHAR(100)                               -- Etat recap des fichiers traités
+DEFINE Farchive    CHAR(100)                               -- Nom FIchier archiver
+DEFINE r_Lot       RECORD LIKE sgmvr.*                     -- Ligne comptable
+DEFINE r_libx      CHAR(300)                               -- Libellé complementaire
+DEFINE g_lus       INTEGER
+DEFINE t_lus       INTEGER
+DEFINE g_ecr       INTEGER
+DEFINE t_ecr       INTEGER
+DEFINE g_ign       INTEGER
+DEFINE t_ign       INTEGER
+DEFINE g_monD      DECIMAL(20,4)
+DEFINE t_sumD      DECIMAL(20,4)
+DEFINE g_monC      DECIMAL(20,4)
+DEFINE t_sumC      DECIMAL(20,4)
+DEFINE g_Ok        INTEGER
+DEFINE g_Ko        INTEGER
+DEFINE g_Err       INTEGER 
+####################################################################################################
+DEFINE Tab001 ARRAY [9000] OF RECORD
+       age    CHAR(5),
+       lib    CHAR(30)
+       END RECORD
+DEFINE Tab005 ARRAY [999] OF RECORD
+       dev    CHAR(5),
+       lib    CHAR(30)
+       END RECORD
+END GLOBALS
+####################################################################################################
+MAIN
+
+   CALL Write_FTrace("D")
+   WHENEVER ERROR CALL F_Erreur
+
+   CALL Parametres()
+   CALL ExploreDir()
+
+   CALL Write_FTrace("F")
+
+END MAIN
+####################################################################################################
+FUNCTION Parametres()
+DEFINE vcmd        CHAR(100)
+DEFINE vpar        CHAR(100)
+DEFINE vDir        CHAR(100)
+DEFINE vchr        CHAR(3)
+DEFINE i,j         INTEGER
+DEFINE vKo         INTEGER
+DEFINE vexiste     SMALLINT
+
+   LET vKo = 0
+
+   SET ISOLATION TO DIRTY READ;
+-- Date comptable
+   INITIALIZE r_Bknom.* TO NULL 
+   INITIALIZE g_dco     TO NULL
+   SELECT * INTO r_Bknom.* FROM Bknom WHERE age = "99000" AND ctab = "778" AND cacc = "PARAM1"
+   IF SQLCA.SQLCODE = 100 THEN
+      LET vKo = vKo + 1
+      LET g_msgbox = "DATE COMPTABLE NON DECLAREE DANS [778,PARAM1]."
+      CALL Write_Ftrace("A")
+   ELSE
+      LET g_dco = DATE(r_Bknom.lib1[1,10])
+      IF DATE(g_dco) IS NULL THEN
+         LET vKo = vKo + 1
+         LET g_msgbox = "DATE COMPTABLE INVALIDE [778,PARAM1]."
+         CALL Write_Ftrace("A")
+      END IF
+   END IF
+
+-- Date compatble à forcer
+   INITIALIZE g_date TO NULL
+   FOR i = 1 TO NUM_ARGS()
+      LET vpar = ARG_VAL(i)
+      LET vchr = vpar[1,3]
+      LET j    = LENGTH(vpar CLIPPED)
+      IF vchr = "-d:" THEN LET g_date = vpar[4,j] END IF
+   END FOR
+   IF LENGTH(g_date CLIPPED) != 0 THEN
+      IF DATE(g_date) IS NULL THEN
+         LET vKo = vKo + 1
+         LET g_msgbox = "DATE COMPTABLE A FORCER INVALIDE"
+      ELSE   
+         LET g_msgbox = "FORCER DATE COMPTABLE A: ",g_date
+      END IF
+   ELSE
+      LET g_date = TODAY USING "DD/MM/YYYY"
+      LET g_msgbox = "DATE COMPTABLE FORCER A: ",g_date
+   END IF
+   CALL Write_Ftrace("A")
+
+-- Repertoire des lots comptable + Repertoire d'archivage
+   SET ISOLATION TO DIRTY READ;
+   INITIALIZE Dir_In,Dir_Arc TO NULL
+   SELECT trim(lib1),trim(lib4) INTO Dir_In,Dir_Arc FROM Bknom 
+    WHERE age = "99000" AND ctab = "470" AND cacc = "SPLOAD72"
+   IF SQLCA.SQLCODE != 0 THEN
+      LET vKo = vKo + 1
+      LET g_msgbox = "CLE [470,SPLOAD72] NON DECLAREE"
+      CALL Write_Ftrace("A")
+   ELSE   
+      IF LENGTH(Dir_In CLIPPED) = 0 THEN
+         LET vKo = vKo + 1
+         LET g_msgbox = "REPERTOIRE DES LOTS COMPTABLE VIDE[470,SPLOAD72,lib1]"
+         CALL Write_Ftrace("A")
+      ELSE
+         LET vDir = Exists_Dir(Dir_In CLIPPED)
+         IF vDir CLIPPED != "+1" THEN
+            LET vKo = vKo + 1
+            LET g_msgbox = Dir_In CLIPPED," REPERTOIRE INEXISTANT [470,SPLOAD72,lib1]"
+            CALL Write_Ftrace("A")
+         ELSE
+            LET g_msgbox = "REPERTOIRE A EXPLORER  : ",Dir_In
+            CALL Write_Ftrace("A")
+         END IF
+      END IF
+      IF LENGTH(Dir_Arc CLIPPED) = 0 THEN
+         LET vKo = vKo + 1
+         LET g_msgbox = "REPERTOIRE D'ARCHIVE DES LOTS TRAITES VIDE [470,SPLOAD72,lib4]"
+         CALL Write_Ftrace("A")
+      ELSE   
+         LET vDir = Exists_Dir(Dir_Arc CLIPPED)
+         IF vDir CLIPPED != "+1" THEN
+            LET vKo = vKo + 1
+            LET g_msgbox = Dir_Arc CLIPPED," REPERTOIRE INEXISTANT [470,SPLOAD72,lib4]"
+            CALL Write_Ftrace("A")
+         END IF
+      END IF
+   END IF
+
+-- Repertoire d'archive des fichiers non traites
+   SET ISOLATION TO DIRTY READ;
+   INITIALIZE Dir_Rej TO NULL
+   SELECT trim(lib2) INTO Dir_Rej FROM Bknom WHERE age = "99000" AND ctab = "097" AND cacc = "R438"
+   IF SQLCA.SQLCODE != 0 THEN
+      LET vKo = vKo + 1
+      LET g_msgbox = "REPERTOIRE D'ARCHIVE DES LOTS REJETES NON DECLARE[097,R438]"
+      CALL Write_Ftrace("A")
+   ELSE
+      IF LENGTH(Dir_Rej CLIPPED) = 0 THEN
+         LET vKo = vKo + 1
+         LET g_msgbox = "REPERTOIRE D'ARCHIVE DES LOTS REJETES VIDE [097,R438]"
+         CALL Write_Ftrace("A")
+      ELSE   
+         LET vDir = Exists_Dir(Dir_Rej CLIPPED)
+         IF vDir CLIPPED != "+1" THEN
+            LET vKo = vKo + 1
+            LET g_msgbox = Dir_Rej CLIPPED," REPERTOIRE INEXISTANT [097,R438]"
+            CALL Write_Ftrace("A")
+         END IF
+      END IF
+   END IF
+
+-- Fichier Etat recap des fichiers traités
+   SET ISOLATION TO DIRTY READ;
+   INITIALIZE Etat_Ok TO NULL
+   SELECT trim(lib2) INTO Etat_Ok FROM Bknom WHERE age = "99000" AND ctab = "097" AND cacc = "R889"
+   IF SQLCA.SQLCODE != 0 THEN
+      LET vKo = vKo + 1
+      LET g_msgbox = "REPERTOIRE ETAT RECAP DES LOTS TRAITES NON DECLARE[097,R889]"
+      CALL Write_Ftrace("A")
+   ELSE
+      IF LENGTH(Etat_Ok CLIPPED) = 0 THEN
+         LET vKo = vKo + 1
+         LET g_msgbox = "REPERTOIRE ETAT RECAP DES LOTS TRAITES VIDE [097,R889]"
+         CALL Write_Ftrace("A")
+      ELSE
+         LET vDir = Exists_Dir(Etat_Ok CLIPPED)
+         IF vDir CLIPPED != "+1" THEN
+            LET vKo = vKo + 1
+            LET g_msgbox = Etat_Ok CLIPPED," REPERTOIRE INEXISTANT [097,R889]"
+            CALL Write_Ftrace("A")
+         END IF
+      END IF  
+      LET Etat_OK = Etat_OK CLIPPED,"rapport_",g_dco USING "YYYYMMDD","_",g_heurdeb,"_bon"
+   END IF
+
+-- Fichier Etat recap des fichiers non traités
+   SET ISOLATION TO DIRTY READ;
+   INITIALIZE Etat_Ko TO NULL
+   SELECT trim(lib2) INTO Etat_Ko FROM Bknom WHERE age = "99000" AND ctab = "097" AND cacc = "R898"
+   IF SQLCA.SQLCODE != 0 THEN
+      LET vKo = vKo + 1
+      LET g_msgbox = "REPERTOIRE ETAT RECAP DES LOTS NON TRAITES NON DECLARE[097,R898]"
+      CALL Write_Ftrace("A")
+   ELSE
+      IF LENGTH(Etat_Ko CLIPPED) = 0 THEN
+         LET vKo = vKo + 1
+         LET g_msgbox = "REPERTOIRE ETAT RECAP DES LOTS NON TRAITES VIDE [097,R898]"
+         CALL Write_Ftrace("A")
+      ELSE
+         LET vDir = Exists_Dir(Etat_Ko CLIPPED)
+         IF vDir CLIPPED != "+1" THEN
+            LET vKo = vKo + 1
+            LET g_msgbox = Etat_Ko CLIPPED," REPERTOIRE INEXISTANT [097,R898]"
+            CALL Write_Ftrace("A")
+         END IF
+      END IF
+      LET Etat_Ko = Etat_Ko CLIPPED,"rapport_",g_dco USING "YYYYMMDD","_",g_heurdeb,"_rej"
+   END IF
+
+-- Repertoire des etats des ecritures comptables
+   SET ISOLATION TO DIRTY READ;
+   INITIALIZE Dir_Etat TO NULL
+   SELECT trim(lib2) INTO Dir_Etat FROM Bknom WHERE age = "99000" AND ctab = "097" AND cacc = "R875"
+   IF SQLCA.SQLCODE != 0 THEN
+      LET vKo = vKo + 1
+      LET g_msgbox = "REPERTOIRE ETAT DES MVTS PAR LOT NON DECLARE[097,R875]"
+      CALL Write_Ftrace("A")
+   ELSE   
+      IF LENGTH(Dir_Etat CLIPPED) = 0 THEN
+         LET vKo = vKo + 1
+         LET g_msgbox = "REPERTOIRE ETAT DES MVTS PAR LOT VIDE [097,R875]"
+         CALL Write_Ftrace("A")
+      ELSE   
+         LET vDir = Exists_Dir(Dir_Etat CLIPPED)
+         IF vDir CLIPPED != "+1" THEN
+            LET vKo = vKo + 1
+            LET g_msgbox = Dir_Etat CLIPPED," REPERTOIRE INEXISTANT [097,R875]"
+            CALL Write_Ftrace("A")
+         END IF
+      END IF
+   END IF
+
+-- Repertoire des fichiers etats des rejets ou des anomalies
+   SET ISOLATION TO DIRTY READ;
+   INITIALIZE Dir_Err TO NULL
+   SELECT trim(lib2) INTO Dir_Err FROM Bknom WHERE age = "99000" AND ctab = "097" AND cacc = "R876"
+   IF SQLCA.SQLCODE != 0 THEN
+      LET vKo = vKo + 1
+      LET g_msgbox = "REPERTOIRE DES REJETS PAR LOT NON DECLARE[097,R876]"
+      CALL Write_Ftrace("A")
+   ELSE
+      IF LENGTH(Dir_Err CLIPPED) = 0 THEN
+         LET vKo = vKo + 1
+         LET g_msgbox = "REPERTOIRE DES REJETS PAR LOT VIDE [097,R876]"
+         CALL Write_Ftrace("A")
+      ELSE
+         LET vDir = Exists_Dir(Dir_Err CLIPPED)
+         IF vDir CLIPPED != "+1" THEN
+            LET vKo = vKo + 1
+            LET g_msgbox = Dir_Err CLIPPED," REPERTOIRE INEXISTANT [097,R876]"
+            CALL Write_Ftrace("A")
+         END IF
+      END IF
+   END IF
+
+   IF vKo != 0 THEN
+      INITIALIZE g_msgbox TO NULL
+      CALL Write_Ftrace("E")
+   END IF
+
+-- Contrôle taille des identifiants---------------------------------------------------------------------
+   LET vKo = 0
+   SET ISOLATION TO DIRTY READ;
+   DECLARE CurIden CURSOR FOR SELECT cacc,trim(lib3) FROM Bknom WHERE age = "99000" AND ctab = "460" AND lib5 = "O"
+   FOREACH CurIden INTO r_Bk460.cacc,r_Bk460.lib3
+      IF LENGTH(r_Bk460.lib3 CLIPPED) != 4 THEN
+         LET vKo = -1
+         LET g_msgbox = "Colonne representant IDEN doit être déclaré sur 4 positions [460,",r_Bk460.cacc CLIPPED,"]"
+         CALL Write_Ftrace("A")
+      END IF 
+   END FOREACH
+   SET ISOLATION TO DIRTY READ;
+   DECLARE CurNden CURSOR FOR
+      SELECT trim(lib3),count(*) FROM Bknom
+       WHERE age = "99000" AND ctab = "460" AND lib5 = "O" GROUP BY lib3 HAVING count(*) > 1
+   FOREACH CurNden INTO r_Bk460.lib3,i
+      LET vKo = -1
+      LET g_msgbox = "Colonne representant IDEN non unique [460,",r_Bk460.lib3 CLIPPED,"]"
+      CALL Write_Ftrace("A")
+   END FOREACH
+   IF vko = -1 THEN
+      CALL Write_Ftrace("E")
+   END IF
+   
+-- Chargement table des agences
+   FOR i = 1 TO 9000 INITIALIZE Tab001[i].* TO NULL END FOR
+   DECLARE CurAge CURSOR FOR SELECT * FROM Bknom WHERE age = "99000" AND ctab = "001"
+   FOREACH CurAge INTO r_Bknom.*
+      IF r_Bknom.cacc < "00001" THEN CONTINUE FOREACH END IF
+      IF r_Bknom.cacc > "09000" THEN CONTINUE FOREACH END IF
+      LET i = r_Bknom.cacc
+      LET Tab001[i].age = r_Bknom.cacc
+      LET Tab001[i].lib = r_Bknom.lib1
+   END FOREACH
+-- Chargement table des des devises
+   FOR i = 1 TO 100  INITIALIZE Tab005[i].* TO NULL END FOR
+   DECLARE CurDev CURSOR FOR SELECT * FROM Bknom WHERE age = "99000" AND ctab = "005"
+   FOREACH CurDev INTO r_Bknom.*
+      IF r_Bknom.cacc < "001" THEN CONTINUE FOREACH END IF
+      IF r_Bknom.cacc > "999" THEN CONTINUE FOREACH END IF
+      LET i = r_Bknom.cacc
+      LET Tab005[i].dev = r_Bknom.cacc
+      LET Tab005[i].lib = r_Bknom.lib1
+   END FOREACH
+
+END FUNCTION
+####################################################################################################
+FUNCTION Exists_Dir(vDir)
+DEFINE vDir        CHAR(100)
+DEFINE vcmd        CHAR(100)
+DEFINE vchr        CHAR(1)
+DEFINE i           INTEGER
+DEFINE vexiste     SMALLINT
+
+   IF LENGTH(vDir CLIPPED) = 0 THEN RETURN "+1" CLIPPED END IF
+   
+   FOR i = LENGTH(vDir CLIPPED) TO 1 STEP -1
+      LET vchr = vDir[i,i]
+      IF  vchr = "/" THEN EXIT FOR END IF
+   END FOR
+   LET vDir = vDir[1,i]
+   LET vcmd = "test -d ",vDir CLIPPED
+   CALL exec_cmd (vcmd CLIPPED) RETURNING vexiste
+   IF vexiste != 0 THEN RETURN vDir CLIPPED END IF
+
+   RETURN "+1"
+
+END FUNCTION
+####################################################################################################
+FUNCTION ExploreDir()
+DEFINE vls         CHAR(200)
+DEFINE vfile       CHAR(200)
+DEFINE vexec       CHAR(200)
+DEFINE vstat       SMALLINT
+DEFINE vNbre       INTEGER
+
+   LET vNbre = 0
+   LET g_Ko  = 0
+   LET g_Ok  = 0
+
+   LET vls = "ls ",Dir_In CLIPPED
+   LET g_hndLs = base.Channel.create()
+   CALL g_hndLs.OPENPIPE(vls,"r")
+
+   WHILE g_hndLs.READ(g_file)
+
+      IF LENGTH(g_file CLIPPED) = 0 THEN CONTINUE WHILE END IF
+      CALL Traite_File()
+      LET vNbre = vNbre + 1
+   END WHILE   
+   CALL g_hndLs.CLOSE()
+
+   IF g_Ok > 0 THEN  FINISH REPORT Recap_Ok END IF
+   IF g_Ko > 0 THEN  FINISH REPORT Recap_Ko END IF
+
+   LET g_msgbox = "NBRE FICHIERS LUS      : ",vNbre
+   CALL Write_Ftrace("A")
+   LET g_msgbox = "FICHIERS TRAITES       : ",g_Ok
+   CALL Write_Ftrace("A")
+   LET g_msgbox = "FICHIERS NON TRAITES   : ",g_Ko
+   CALL Write_Ftrace("A")
+
+END FUNCTION
+####################################################################################################
+FUNCTION Traite_File()
+
+   LET g_Err = 0
+
+   IF Evaluate_File() = -1 THEN CALL Archiver_File_Ko() RETURN END IF
+   IF Ctrl_Data()     = -1 THEN CALL Archiver_File_Ko() RETURN END IF   
+   IF Genere_Mvts()   = -1 THEN CALL Archiver_File_Ko() RETURN END IF
+   IF Etat_Mvts()     = -1 THEN                         RETURN END IF
+
+END FUNCTION
+####################################################################################################
+FUNCTION Evaluate_File()
+DEFINE i,j,k,l,m,n INTEGER
+DEFINE vstat       SMALLINT
+DEFINE chr1        CHAR(1)
+DEFINE chr4        CHAR(4)
+DEFINE vnom        CHAR(100) 
+DEFINE vexec       CHAR(200)
+
+-- Existence Fichier à traiter
+   LET vexec = "test -f ",Dir_In CLIPPED,g_file CLIPPED
+   LET vstat = exec_cmd (vexec CLIPPED)
+   IF vstat != 0 THEN
+      CALL Edit_Recap_Ko("INEXISTANT OU ENDOMMAGE")
+      RETURN -1
+   END IF
+
+-- Nombre de lignes à traiter
+   LET i = 0
+   LET vexec = "wc -l ",Dir_In CLIPPED,g_file CLIPPED," | awk '{print $1}' 2>/dev/null"
+   LET g_hndwc = base.Channel.create()
+   CALL g_hndwc.OPENPIPE(vexec CLIPPED,"r")
+   CALL g_hndwc.SETDELIMITER("")
+   WHILE g_hndwc.READ([i])
+   END WHILE
+   CALL g_hndwc.CLOSE()
+
+   IF i = 0 THEN
+      CALL Edit_Recap_Ko("VIDE")
+      RETURN -1
+   END IF
+
+-- Verification du nom de fichier à traiter
+   LET vnom = g_file CLIPPED
+   LET l = LENGTH(vnom CLIPPED)
+-- Taille du nom au moins 7 caractères
+   IF l < 8 THEN
+      CALL Edit_Recap_Ko("TAILLE DU NOM DE FICHIER DOIT ETRE SUPERIEUR A 7")
+      RETURN -1
+   END IF
+-- Présence du caractère "-" au moins 1 fois
+   LET k = 0
+   FOR i = 1 TO l
+       LET chr1 = vnom[i,i]
+       IF chr1 = "-" THEN LET k = k + 1 EXIT FOR END IF
+   END FOR
+   IF k = 0 THEN
+      CALL Edit_Recap_Ko("LE NOM DU FICHIER DOIT CONTENIR LE - AU MOINS 1 FOIS")
+      RETURN -1
+   END IF
+-- Detecter le point à partir de la fin et ignorer le reste
+   WHILE TRUE
+      LET k = 0
+      FOR i = l TO 1 STEP -1
+          LET chr1 = vnom[i,i]
+          IF chr1 != "." THEN CONTINUE FOR END IF
+          LET k    = i - 1
+          LET vnom = vnom[1,k]
+          LET l    = LENGTH(vnom CLIPPED)
+          EXIT FOR
+      END FOR
+      IF k = 0 THEN EXIT WHILE END IF
+   END WHILE
+-- Detecter numéro de lot
+   INITIALIZE g_nlot TO NULL
+   LET l = LENGTH(vnom CLIPPED)
+   FOR i = l TO 1 STEP -1
+       LET chr1 = vnom[i,i]
+       IF chr1 != "-" THEN CONTINUE FOR END IF
+       LET i = i + 1
+       LET g_nlot = vnom[i,l]
+       EXIT FOR
+   END FOR
+   IF LENGTH(g_nlot CLIPPED) != 6 THEN
+      CALL Edit_Recap_Ko("NO DE LOT DOIT ETRE SUR 6 CARACTERES")
+      RETURN -1
+   END IF
+   FOR i = 1 TO 6
+       LET chr1 = g_nlot[i,i]
+       IF chr1 NOT MATCHES "[0-9]" THEN
+          CALL Edit_Recap_Ko("NO DE LOT NON NUMERIQUE")
+          RETURN -1
+       END IF
+   END FOR
+-- Determiner nom module
+   INITIALIZE g_cacc TO NULL   
+   LET l = LENGTH(vnom CLIPPED)
+   FOR i = 1 TO l
+       LET chr1 = vnom[i,i]
+       IF chr1 != "-" THEN CONTINUE FOR END IF
+       LET i = i - 1
+       LET g_cacc = vnom[1,i]
+       EXIT FOR
+   END FOR
+   IF LENGTH(g_cacc CLIPPED) = 0 THEN
+      CALL Edit_Recap_Ko("IMPOSSIBLE DE DETECTER NOM MODULE")
+      RETURN -1
+   END IF
+   LET g_cacc = UPSHIFT(g_cacc CLIPPED)
+-- Validation nom module
+   SET ISOLATION TO DIRTY READ;
+   SELECT * INTO r_Bk460.* FROM Bknom 
+    WHERE age = "99000" AND ctab = "460" AND trim(upper(cacc)) = trim(g_cacc)
+   CASE SQLCA.SQLCODE
+   WHEN 0
+      LET r_Bk460.lib5 = UPSHIFT(r_Bk460.lib5)
+      LET r_Bk460.lib2 = UPSHIFT(r_Bk460.lib2)
+      IF LENGTH(r_Bk460.lib5 CLIPPED) = 0 THEN LET r_Bk460.lib5 = "N" END IF
+      IF LENGTH(r_Bk460.mnt1 CLIPPED) = 0 THEN LET r_Bk460.mnt1 = 0   END IF
+      IF LENGTH(r_Bk460.tau1 CLIPPED) = 0 THEN LET r_Bk460.tau1 = 0   END IF
+   WHEN 100
+      CALL Edit_Recap_Ko("NOM MODULE NON PARAMETRE DANS [ctab=460]")
+      RETURN -1
+   OTHERWISE
+      LET g_msgbox = "ECHEC SELECT Bknom.SQL: ",SQLCA.SQLCODE USING "-<<<<<","."
+      CALL Edit_Recap_Ko(g_msgbox CLIPPED)
+      RETURN -1
+   END CASE
+-- Code utilisateur
+   IF LENGTH(r_Bk460.lib2 CLIPPED) = 0 THEN
+      LET g_msgbox = "MODULE (",g_cacc CLIPPED,"): PARAMETRE MANQUANT (lib2=uti)"
+      CALL Edit_Recap_Ko(g_msgbox CLIPPED)
+      RETURN -1
+   END IF
+
+-- Verifier si lot déjà traité
+   LET g_sqlprepar = 'SELECT FIRST 1 * FROM Bkmvr WHERE uti = ? AND npr = ?'
+   PREPARE p1 FROM g_sqlprepar CLIPPED
+   EXECUTE p1 INTO r_sgmvr.*  USING r_Bk460.lib2, g_nlot 
+   
+   IF SQLCA.SQLCODE = 0 THEN
+      CALL Edit_Recap_Ko("LOT DEJA TRAITE")
+      CALL Archiver_File_Ok()
+      RETURN -1
+   END IF
+-- Code identifiant 
+-- IF r_Bk460.lib5 = "O" AND LENGTH(r_Bk460.lib3 CLIPPED) = 0 THEN
+--    LET g_Ko = g_Ko + 1
+--    LET g_msgbox = "MODULE (",g_cacc CLIPPED,"): PARAMETRE MANQUANT (lib3=iden)"
+--    OUTPUT TO REPORT RECAP_KO(g_msgbox CLIPPED)
+--    RETURN -1
+-- END IF
+
+   RETURN 0
+
+END FUNCTION
+####################################################################################################
+FUNCTION Ctrl_Data()
+DEFINE vrow,vKo    INTEGER
+DEFINE verr        CHAR(79)
+DEFINE veve        CHAR(2)
+DEFINE vnom        CHAR(200)
+DEFINE i           INTEGER
+
+   LET vKo   = 0
+   LET vrow  = 0
+   LET vnom  = Dir_In CLIPPED,g_file CLIPPED
+   LET g_hndIn = base.Channel.create()
+   CALL g_hndIn.OPENFILE(vnom,"r")
+
+   CALL g_hndIn.SETDELIMITER("|")
+
+   WHILE g_hndIn.READ([r_Lot.*,r_libx])
+
+      LET vrow = vrow + 1 
+      INITIALIZE verr TO NULL
+      LET veve = r_Lot.eve[1,2]
+   -- Agence
+      IF LENGTH(r_Lot.age CLIPPED) != 5 THEN
+         IF LENGTH(verr CLIPPED) = 0 THEN LET verr = "age[?]" ELSE LET verr = verr CLIPPED,", age[?]" END IF
+      ELSE
+         IF r_Lot.age CLIPPED < "00001" OR r_Lot.age CLIPPED > "90000" THEN
+            IF LENGTH(verr CLIPPED) = 0 THEN
+               LET verr = "age[",r_Lot.age CLIPPED,"?]" 
+            ELSE
+               LET verr = verr CLIPPED,",age[",r_Lot.age CLIPPED,"?]"
+            END IF
+         ELSE
+            IF LENGTH(Tab001[r_Lot.age].age CLIPPED) = 0 THEN
+               IF LENGTH(verr CLIPPED) = 0 THEN
+                  LET verr = "age[",r_Lot.age CLIPPED,"?]" 
+               ELSE
+                  LET verr = verr CLIPPED,",age[",r_Lot.age CLIPPED,"?]"
+               END IF
+            END IF
+         END IF
+      END IF
+   -- Devise
+      IF LENGTH(r_Lot.dev CLIPPED) != 3 THEN
+         IF LENGTH(verr CLIPPED) = 0 THEN LET verr = "dev[?]" ELSE LET verr = verr CLIPPED,", dev[?]" END IF
+      ELSE
+         IF r_Lot.dev CLIPPED != "000" THEN 
+            IF LENGTH(Tab005[r_Lot.dev].dev CLIPPED) = 0 THEN
+               IF LENGTH(verr CLIPPED) = 0 THEN
+                  LET verr = "dev[",r_Lot.dev CLIPPED,"?]" 
+               ELSE
+                  LET verr = verr CLIPPED,",dev[",r_Lot.dev CLIPPED,"?]"
+               END IF
+            END IF
+         END IF
+      END IF
+   -- Eve
+      IF veve != "YY" AND veve != "ZZ" THEN
+         IF LENGTH(verr CLIPPED) = 0 THEN LET verr = "eve<>[ZZ,YY]" ELSE LET verr = verr CLIPPED,", eve<>[ZZ,YY]" END IF
+      END IF
+   -- Sen
+      IF r_Lot.sen != "C" AND r_Lot.sen != "D" THEN
+         IF LENGTH(verr CLIPPED) = 0 THEN LET verr = "sen<>[C,D]" ELSE LET verr = verr CLIPPED,", sen<>[C,D]" END IF
+      END IF
+   -- Uti
+      IF r_Lot.uti != r_Bk460.lib2 THEN
+         IF LENGTH(verr CLIPPED) = 0 THEN LET verr = "uti<>[",r_Bk460.lib2 CLIPPED,"]" ELSE LET verr = verr CLIPPED,", uti<>[",r_Bk460.lib2 CLIPPED,"]" END IF
+      END IF
+   -- Npr
+      IF r_Lot.npr CLIPPED != g_nlot CLIPPED THEN
+         IF LENGTH(verr CLIPPED) = 0 THEN LET verr = "npr<>[",g_nlot CLIPPED,"]" ELSE LET verr = verr CLIPPED,", npr<>[",g_nlot CLIPPED,"]" END IF
+      END IF
+   -- Dco
+--    IF LENGTH(r_Lot.dco CLIPPED) != 0 THEN
+--       IF DATE(r_Lot.dco CLIPPED) IS NULL THEN
+--          IF LENGTH(verr CLIPPED) = 0 THEN LET verr = "dco[",r_Lot.dco CLIPPED,"]" ELSE LET verr = verr CLIPPED,", dco[",r_Lot.dco CLIPPED,"]" END IF
+--       END IF
+--    ELSE
+--       IF LENGTH(g_date CLIPPED) != 0 THEN
+--          LET r_Lot.dco = DATE(g_date)  
+--       ELSE   
+--          IF LENGTH(verr CLIPPED) = 0 THEN LET verr = "dco[?]" ELSE LET verr = verr CLIPPED,", dco[?]" END IF
+--       END IF   
+--    END IF
+   -- Dva
+      IF LENGTH(r_Lot.dva CLIPPED) != 0 THEN
+         IF DATE(r_Lot.dva CLIPPED) IS NULL THEN
+            IF LENGTH(verr CLIPPED) = 0 THEN LET verr = "dva[",r_Lot.dva CLIPPED,"?]" ELSE LET verr = verr CLIPPED,", dva[",r_Lot.dva CLIPPED,"?]" END IF
+         END IF
+      END IF
+   -- Montant de la transaction
+      IF LENGTH(r_Lot.mon CLIPPED) = 0 THEN LET r_Lot.mon = 0 END IF
+      IF LENGTH(vErr CLIPPED) != 0 THEN
+         LET vKo = vKo + 1
+         CALL Edit_Etat_Err(vrow,verr)
+      END IF
+   END WHILE
+   CALL g_hndIn.CLOSE()
+
+   IF vKo > 0 THEN 
+      FINISH REPORT Etat_Err
+      LET g_msgbox = "CONTIENT DES ANOMALIES.VOIR ",File_Err CLIPPED
+      CALL Edit_Recap_Ko(g_msgbox CLIPPED)
+      RETURN -1
+   END IF
+
+   RETURN 0
+
+END FUNCTION
+####################################################################################################
+FUNCTION Genere_Mvts()
+DEFINE i,j         INTEGER
+DEFINE vrun        SMALLINT
+DEFINE vnom        CHAR(200)
+DEFINE c           CHAR(1)
+DEFINE vnoseq      INTEGER
+DEFINE vord        INTEGER
+DEFINE vKo         INTEGER
+
+   LET vnom   = Dir_In CLIPPED,g_file CLIPPED
+   LET vKo    = 0
+   LET g_lus  = 0
+   LET g_ecr  = 0
+   LET g_ign  = 0
+   LET g_monD = 0
+   LET g_monC = 0
+
+-- Si libellé complémentaire prévu
+   IF r_Bk460.lib5 = "O" THEN LET vnoseq = r_Bk460.mnt1 END IF
+
+   WHENEVER ERROR CONTINUE
+   DROP TABLE Tkmvr;
+   DROP TABLE Tkmvrl;
+   SELECT * FROM Bkmvr  WHERE 1!=1 INTO TEMP Tkmvr  WITH NO LOG; 
+   SELECT * FROM Bkmvrl WHERE 1!=1 INTO TEMP Tkmvrl WITH NO LOG;    
+
+   LET g_hndIn = base.Channel.create()
+   CALL g_hndIn.OPENFILE(vnom,"r")
+   CALL g_hndIn.SETDELIMITER("|")
+
+   WHILE g_hndIn.READ([r_sgmvr.*,r_libx])
+      LET g_lus = g_lus + 1
+      IF LENGTH(r_sgmvr.mon CLIPPED) = 0 THEN
+         LET g_ign = g_ign + 1
+         CONTINUE WHILE
+      END IF   
+      IF r_sgmvr.mon = 0 THEN
+         LET g_ign = g_ign + 1
+         CONTINUE WHILE
+      END IF
+      IF r_sgmvr.sen = "D" THEN 
+         LET g_monD = g_monD + r_sgmvr.mon
+      ELSE
+         LET g_monC = g_monC + r_sgmvr.mon
+      END IF   
+   -- Si libellé complémentaire prévu   
+      IF r_Bk460.lib5 = "O" THEN
+         IF LENGTH(r_libx CLIPPED) != 0 THEN LET r_libx = Fnc_Ltrim(r_libx)   END IF
+         IF LENGTH(r_libx CLIPPED) != 0 THEN LET r_libx = Fnc_Replace(r_libx) END IF
+         IF LENGTH(r_libx CLIPPED) != 0 THEN
+            LET r_Bk460.mnt1   = r_Bk460.mnt1 + 1
+            IF r_Bk460.mnt1 > 999999999 THEN
+               LET r_Bk460.tau1 = r_Bk460.tau1 + 1
+               IF r_Bk460.tau1 > 99 THEN LET r_Bk460.tau1 = 0 END IF
+               LET r_Bk460.mnt1 = 1
+            END IF
+            LET r_sgmvr.iden   = r_Bk460.lib3 CLIPPED,r_Bk460.tau1 USING "&&"
+            LET r_sgmvr.noseq  = r_Bk460.mnt1
+            LET vord           = 0
+            WHILE TRUE
+               INITIALIZE r_Bkmvrl.* TO NULL
+               IF LENGTH(r_libx CLIPPED) = 0 THEN EXIT WHILE END IF
+               FOR i = 61 TO 1 STEP -1
+                  LET c = r_libx[i,i]
+                  IF LENGTH(c CLIPPED) = 0 THEN
+                  	
+                     LET r_Bkmvrl.lib   = r_libx[1,i-1]
+                      --DISPLAY "r_Bkmvrl.lib"  ,r_Bkmvrl.lib     ------------
+                     LET vord           = vord + 1
+                     LET r_Bkmvrl.iden  = r_sgmvr.iden
+                      --DISPLAY "r_Bkmvrl.iden"  ,r_Bkmvrl.iden   ------------
+                     LET r_Bkmvrl.noseq = r_sgmvr.noseq
+                     --DISPLAY "r_Bkmvrl.noseq"  ,r_Bkmvrl.noseq  ------------
+                     LET r_Bkmvrl.ord   = vord 
+                     --DISPLAY "r_Bkmvrl.ord"  ,r_Bkmvrl.ord      ------------  
+                     LET r_Bkmvrl.lang  = "001"
+                     --DISPLAY "r_Bkmvrl.lang"  ,r_Bkmvrl.lang    ------------
+                     INSERT INTO Tkmvrl VALUES (r_Bkmvrl.*)
+                     --DISPLAY "$",r_Bkmvrl.*,"$"
+                     --DISPLAY "================= insert ===========> ",TIME
+                     IF SQLCA.SQLCODE < 0 THEN 
+                        LET g_msgbox = "ECHEC INSERT Tkmvrl.SQL: ",SQLCA.SQLCODE USING "-<<<<<","."
+                        CALL Edit_Etat_Err(g_lus,g_msgbox CLIPPED)
+                        LET vKo = vKo + 1
+                        EXIT FOR
+                     END IF
+                     LET r_libx = Fnc_Ltrim(r_libx[i+1,300])
+                     EXIT FOR
+                  END IF
+               IF i=1 AND LENGTH(c CLIPPED) != 0 THEN 
+               	
+                     LET r_Bkmvrl.lib   = r_libx[1,60]
+                      --DISPLAY "r_Bkmvrl.lib"  ,r_Bkmvrl.lib     ------------
+                     LET vord           = vord + 1
+                     LET r_Bkmvrl.iden  = r_sgmvr.iden
+                      --DISPLAY "r_Bkmvrl.iden"  ,r_Bkmvrl.iden   ------------
+                     LET r_Bkmvrl.noseq = r_sgmvr.noseq
+                     --DISPLAY "r_Bkmvrl.noseq"  ,r_Bkmvrl.noseq  ------------
+                     LET r_Bkmvrl.ord   = vord 
+                     --DISPLAY "r_Bkmvrl.ord"  ,r_Bkmvrl.ord      ------------  
+                     LET r_Bkmvrl.lang  = "001"
+                     --DISPLAY "r_Bkmvrl.lang"  ,r_Bkmvrl.lang    ------------
+                     INSERT INTO Tkmvrl VALUES (r_Bkmvrl.*)
+                     --DISPLAY "$",r_Bkmvrl.*,"$"
+                     --DISPLAY "================= insert ===========> ",TIME
+                     IF SQLCA.SQLCODE < 0 THEN 
+                        LET g_msgbox = "ECHEC INSERT Tkmvrl.SQL: ",SQLCA.SQLCODE USING "-<<<<<","."
+                        CALL Edit_Etat_Err(g_lus,g_msgbox CLIPPED)
+                        LET vKo = vKo + 1
+                        EXIT FOR
+                     END IF
+                     LET r_libx = Fnc_Ltrim(r_libx[62,300])
+                     EXIT FOR
+               	
+               END IF 
+               END FOR
+               
+               IF SQLCA.SQLCODE < 0 THEN EXIT WHILE END IF
+            END WHILE
+         ELSE   
+            INITIALIZE r_sgmvr.iden TO NULL
+         END IF
+      ELSE
+         INITIALIZE r_sgmvr.iden TO NULL
+      END IF
+   -- Insérer mouvement comptable
+      LET r_sgmvr.dco = DATE(g_date)
+   -- Forcer CTA à (O)ui
+      LET r_sgmvr.cta = "O"
+   -- Suffixe à "  " si NULL
+      IF LENGTH(r_sgmvr.suf CLIPPED) = 0 THEN LET r_sgmvr.suf = "  " END IF
+   -- Maie à jour arrêté à "  " si NULL
+      IF LENGTH(r_sgmvr.mar CLIPPED) = 0 THEN LET r_sgmvr.mar = " "  END IF
+   -- Besoins V10 - Ajout de colonnes non utilisées   
+      INSERT INTO Tkmvr VALUES (r_sgmvr.*," "," "," "," "," "," "," "," "," "," "," "," ")
+      IF SQLCA.SQLCODE < 0 THEN 
+         LET g_msgbox = "ECHEC INSERT Tkmvr.SQL: ",SQLCA.SQLCODE USING "-<<<<<","."
+         CALL Edit_Etat_Err(g_lus,g_msgbox CLIPPED)
+         LET vKo = vKo + 1
+      END IF
+      LET g_ecr = g_ecr + 1
+   END WHILE
+   IF g_Err != 0 THEN
+      FINISH REPORT Etat_Err
+   END IF   
+   IF vKo != 0 THEN
+      LET g_msgbox = "ECHEC INSERT BD.VOIR ",File_Err CLIPPED
+      CALL Edit_Recap_Ko(g_msgbox CLIPPED)
+      RETURN -1
+   END IF
+
+BEGIN WORK
+
+   INSERT INTO Bkmvrl SELECT * FROM Tkmvrl;
+   IF SQLCA.SQLCODE < 0 THEN 
+      LET g_msgbox = "ECHEC INSERT Bkmvrl.SQL: ",SQLCA.SQLCODE USING "-<<<<<","."
+      ROLLBACK WORK;
+      CALL Edit_Recap_Ko(g_msgbox CLIPPED)
+      RETURN -1
+   END IF
+
+   INSERT INTO Bkmvr SELECT * FROM Tkmvr;   
+   IF SQLCA.SQLCODE < 0 THEN 
+      LET g_msgbox = "ECHEC INSERT Bkmvr.SQL: ",SQLCA.SQLCODE USING "-<<<<<","."
+      ROLLBACK WORK;
+      CALL Edit_Recap_Ko(g_msgbox CLIPPED)
+      RETURN -1
+   END IF
+
+-- Mise à jour dernier n° de séquence généré
+   IF r_Bk460.lib5 = "O" THEN
+      UPDATE Bknom SET mnt1 = r_Bk460.mnt1,tau1 = r_Bk460.tau1 
+       WHERE age = "99000" AND ctab = "460" AND upper(cacc) = upper(g_cacc)
+      IF SQLCA.SQLCODE < 0 THEN 
+         LET g_msgbox = "ECHEC UPDATE Bknom.SQL: ",SQLCA.SQLCODE USING "-<<<<<","."
+         ROLLBACK WORK;
+         CALL Edit_Recap_Ko(g_msgbox CLIPPED)
+         RETURN -1
+      END IF
+   END IF
+
+   COMMIT WORK;
+
+   CALL Archiver_File_Ok()
+      
+   LET g_Ok = g_Ok + 1
+   IF g_Ok = 1 THEN
+      START REPORT Recap_Ok TO Etat_Ok   
+   END IF
+   OUTPUT TO REPORT RECAP_OK()
+   
+   WHENEVER ERROR CALL F_Erreur
+
+   RETURN 0
+
+END FUNCTION
+####################################################################################################
+FUNCTION Archiver_File_Ok()
+DEFINE vhms        CHAR(10)
+DEFINE vexec       CHAR(200)
+DEFINE vrun        SMALLINT
+
+   LET vhms     = TIME
+   LET Farchive = Dir_Arc CLIPPED,g_dco USING "YYYYMMDD","_",vhms[1,2],vhms[4,5],vhms[7,8],"_",
+                  g_file CLIPPED
+   LET vexec    = "mv ",Dir_In CLIPPED,g_file CLIPPED," ",Farchive CLIPPED," 2>/dev/null"
+
+   LET vrun = exec_cmd (vexec CLIPPED)
+
+END FUNCTION
+####################################################################################################
+FUNCTION Archiver_File_Ko()
+DEFINE vhms        CHAR(10)
+DEFINE vexec       CHAR(200)
+DEFINE vrun        SMALLINT
+
+   LET vhms     = TIME
+   LET Farchive = Dir_Rej CLIPPED,g_dco USING "YYYYMMDD","_",vhms[1,2],vhms[4,5],vhms[7,8],"_",
+                  g_file CLIPPED
+   LET vexec    = "mv ",Dir_In CLIPPED,g_file CLIPPED," ",Farchive CLIPPED," 2>/dev/null"
+
+   LET vrun = exec_cmd (vexec CLIPPED)
+
+END FUNCTION
+####################################################################################################
+FUNCTION Etat_Mvts()
+DEFINE vnom CHAR(200)
+DEFINE vrun STRING
+
+-- Etat de controle
+   LET File_Ecr = Dir_Etat CLIPPED,g_cacc CLIPPED,"-",g_nlot CLIPPED,"-controle.txt"
+   START REPORT Etat_Ctrl TO File_Ecr
+   DECLARE CurCtrl CURSOR FOR 
+      SELECT dco,age,dev,sum(decode(sen,"D",mon,0)),sum(decode(sen,"C",mon,0))
+        FROM Bkmvr
+       WHERE uti = r_Bk460.lib2 AND npr = g_nlot 
+       GROUP BY dco,age,dev
+       ORDER BY age,dev,dco
+   FOREACH CurCtrl INTO r_sgmvr.dco,r_sgmvr.age,r_sgmvr.dev,r_sgmvr.mon,r_sgmvr.mctv
+      OUTPUT TO REPORT Etat_Ctrl(r_sgmvr.*)
+      INITIALIZE r_sgmvr.* TO NULL
+   END FOREACH
+   FINISH REPORT Etat_Ctrl
+
+   IF r_Bk460.mnt5 != 1 THEN RETURN 0 END IF
+
+-- Etat des ecritures comptables
+   LET File_Ecr = Dir_Etat CLIPPED,g_cacc CLIPPED,"-",g_nlot CLIPPED,".txt"
+   START REPORT Etat_Ecr TO File_Ecr
+   DECLARE CurMvts CURSOR FOR 
+      SELECT * FROM Bkmvr WHERE uti = r_Bk460.lib2 AND npr = g_nlot ORDER BY age,dev,uti,rlet
+   FOREACH CurMvts INTO r_Lot.*
+      OUTPUT TO REPORT Etat_Ecr(r_Lot.*)
+   END FOREACH
+   FINISH REPORT Etat_Ecr
+
+   IF LENGTH(r_Bk460.lib4 CLIPPED)!=0 THEN
+      LET vrun="cp ",File_Ecr CLIPPED," ",r_Bk460.lib4 CLIPPED," 2>/dev/null"
+      run vrun
+   END IF
+
+   RETURN 0
+
+END FUNCTION
+####################################################################################################
+FUNCTION Edit_Etat_Err(vrow,verr)
+DEFINE vrow        INTEGER
+DEFINE verr        CHAR(79)
+
+   LET g_Err = g_Err + 1
+   IF g_Err = 1 THEN
+      LET File_Err = Dir_Err CLIPPED,g_cacc CLIPPED,"-",g_nlot CLIPPED,".err"
+      START REPORT Etat_Err TO File_Err
+   END IF
+   OUTPUT TO REPORT Etat_Err(vrow,verr)
+   
+END FUNCTION
+####################################################################################################
+FUNCTION Edit_Recap_Ko(vmsge)
+DEFINE vmsge       CHAR(60)
+
+   LET g_Ko = g_Ko + 1
+   IF g_Ko = 1 THEN
+      START REPORT Recap_Ko TO Etat_Ko
+   END IF   
+
+   OUTPUT TO REPORT RECAP_KO(vmsge)
+
+END FUNCTION
+####################################################################################################
+REPORT Etat_Err(vrow,verr)
+DEFINE vrow        INTEGER
+DEFINE verr        CHAR(67)
+DEFINE fpage       SMALLINT
+
+OUTPUT
+   LEFT   MARGIN 0
+   RIGHT  MARGIN 0
+   TOP    MARGIN 0
+   BOTTOM MARGIN 0
+   PAGE   LENGTH 64
+FORMAT
+PAGE HEADER
+   PRINT COLUMN 1,"Edition du ",TODAY USING "DD/MM/YYYY","  ",TIME,"                                   REF : spload72"
+   SKIP 1 LINES
+   PRINT COLUMN 1,"Emplacement : ",Dir_In CLIPPED
+   PRINT COLUMN 1,"Fichier     : ",g_file CLIPPED
+   SKIP 1 LINES
+   PRINT COLUMN 1,"*--------*---------------------------------------------------------------------*"
+   PRINT COLUMN 1,"*  Ligne *                              Anomalie(s)                            *"
+   PRINT COLUMN 1,"*--------*---------------------------------------------------------------------*"
+ON EVERY ROW
+   LET fpage = 0
+   PRINT COLUMN 1,"* ",vrow USING "######"," * ",verr," *"
+ON LAST ROW
+   IF fpage = 0 THEN
+      PRINT COLUMN 1,"*--------*---------------------------------------------------------------------*"
+      LET fpage = 1
+   END IF
+
+PAGE TRAILER
+   IF fpage = 0 THEN
+      PRINT COLUMN 1,"*--------*---------------------------------------------------------------------*"
+   ELSE   
+      SKIP 1 LINE
+   END IF
+
+END REPORT
+####################################################################################################
+REPORT Etat_Ecr(v_Bkmvr)
+DEFINE v_bkmvr     RECORD LIKE sgmvr.*                   -- Table des mouvements comptables
+DEFINE v_fin       SMALLINT
+DEFINE D_mon       CHAR(22)
+DEFINE C_mon       CHAR(22)
+
+OUTPUT
+   LEFT   MARGIN 0
+   RIGHT  MARGIN 0
+   TOP    MARGIN 0
+   BOTTOM MARGIN 0
+   PAGE   LENGTH 64
+
+FORMAT
+
+PAGE HEADER
+
+   PRINT COLUMN 1,"SGMB                                                                                                            EDITE LE ",TODAY USING "DD/MM/YYYY"
+   PRINT COLUMN 1,"                                                                                                                       REF spload72"
+   PRINT COLUMN 1,"                                            LISTE DES ECRITURES COMPTABLES DU LOT ",g_nlot
+   SKIP 1 LINES
+   PRINT COLUMN 1," ACTIVITE : ",v_Bkmvr.uti,"  " ,r_Bk460.lib1
+   LET r_Bknom.lib1 = Tab001[v_Bkmvr.age].lib
+   PRINT COLUMN 1," AGENCE   : ",v_Bkmvr.age," "  ,r_Bknom.lib1
+   IF v_Bkmvr.dev = "000" THEN
+      LET r_Bknom.lib1 = "DIRHAMS"
+   ELSE   
+      LET r_Bknom.lib1 = Tab005[v_Bkmvr.dev].lib
+   END IF
+   PRINT COLUMN 1," DEVISE   : ",v_Bkmvr.dev,"   ",r_Bknom.lib1
+   PRINT COLUMN 1,"*--------*--------*------------------------*------------------------*-------*---------------------------*------------*------------*"
+   PRINT COLUMN 1,"* NUMERO * NUMERO *        MONTANT         *        MONTANT         * CODE  *           LIBELLE         *    DATE    *   DATE     *"
+   PRINT COLUMN 1,"*DOCUMENT* COMPTE *         DEBIT          *        CREDIT          * OPE.  *          OPERATION        *   VALEUR   * COMPTABLE  *"
+   PRINT COLUMN 1,"*--------*--------*------------------------*------------------------*-------*---------------------------*------------*------------*"
+
+BEFORE GROUP OF v_Bkmvr.uti
+   SKIP TO TOP OF PAGE
+   LET v_fin = 0
+
+BEFORE GROUP OF v_Bkmvr.age
+   SKIP TO TOP OF PAGE
+   LET v_fin = 0
+
+BEFORE GROUP OF v_Bkmvr.dev
+   SKIP TO TOP OF PAGE
+   LET v_fin = 0
+
+ON EVERY ROW
+   LET v_fin = 0
+   INITIALIZE D_mon,C_mon TO NULL
+   IF v_Bkmvr.sen = "D" THEN 
+      LET D_mon = v_Bkmvr.mon USING "# ### ### ### ##&.&&&&" 
+   ELSE 
+      LET C_mon = v_Bkmvr.mon USING "# ### ### ### ##&.&&&&"
+   END IF
+
+   PRINT COLUMN 1,"* ",
+                  v_Bkmvr.rlet[3,8]," * ",
+                  v_Bkmvr.ncp[2,7] ," * ",
+                  D_mon            ," * ",
+                  C_mon            ," *  ",
+                  v_Bkmvr.ope      ,"  * ",
+                  v_Bkmvr.lib[1,25]," * ",
+                  v_Bkmvr.dva USING "DD/MM/YYYY"," * ",
+                  v_Bkmvr.dco USING "DD/MM/YYYY"," *"
+AFTER GROUP OF v_Bkmvr.uti
+   IF v_fin = 0 THEN
+      PRINT COLUMN 1,"*--------*--------*------------------------*------------------------*-------*---------------------------*------------*------------*"
+      LET v_fin = 1
+   END IF
+AFTER GROUP OF v_Bkmvr.age
+   IF v_fin = 0 THEN
+      PRINT COLUMN 1,"*--------*--------*------------------------*------------------------*-------*---------------------------*------------*------------*"
+      LET v_fin = 1
+   END IF
+AFTER GROUP OF v_Bkmvr.dev
+   IF v_fin = 0 THEN
+      PRINT COLUMN 1,"*--------*--------*------------------------*------------------------*-------*---------------------------*------------*------------*"
+      LET v_fin = 1
+   END IF
+ON LAST ROW   
+   IF v_fin = 0 THEN
+      PRINT COLUMN 1,"*--------*--------*------------------------*------------------------*-------*---------------------------*------------*------------*"
+      LET v_fin = 1
+   END IF
+PAGE TRAILER
+   IF v_fin = 0 THEN
+      PRINT COLUMN 1,"*--------*--------*------------------------*------------------------*-------*---------------------------*------------*------------*"
+   ELSE   
+      SKIP 1 LINE
+   END IF   
+  
+END REPORT
+####################################################################################################
+REPORT Etat_Ctrl(v_sgmvr)
+DEFINE v_sgmvr     RECORD LIKE sgmvr.*                   -- Table des mouvements comptables
+DEFINE v_fin       SMALLINT
+DEFINE v_deb       DECIMAL(19,4)
+DEFINE v_cre       DECIMAL(19,4) 
+DEFINE v_dif       DECIMAL(19,4)
+
+OUTPUT
+   LEFT   MARGIN 0
+   RIGHT  MARGIN 0
+   TOP    MARGIN 0
+   BOTTOM MARGIN 0
+   PAGE   LENGTH 62
+
+FORMAT
+
+PAGE HEADER
+   PRINT COLUMN 1," SGMA                                                                          REF SPLOAD72"
+   PRINT COLUMN 1," EDIT LE ",TODAY USING "DD/MM/YYYY"," A ",g_heurdeb
+   SKIP 1 LINES
+   PRINT COLUMN 1,"                                     ETAT DE CONTROLE                                      "
+   SKIP 1 LINES
+   PRINT COLUMN 1," MODULE ",r_Bk460.cacc,"  " ,r_Bk460.lib1
+   PRINT COLUMN 1," LOT    ",g_nlot
+   PRINT COLUMN 1," *------------*-------*-----*--------------------*--------------------*--------------------*"
+   PRINT COLUMN 1," *   DATE     *  AGE  * DEV *       CREDIT       *       DEBIT        *     DIFFERENCE     *"
+   PRINT COLUMN 1," *------------*-------*-----*--------------------*--------------------*--------------------*"
+
+ON EVERY ROW
+   LET v_fin = 0
+   PRINT COLUMN 1," * ",v_sgmvr.dco," * ",v_sgmvr.age," * ",v_sgmvr.dev," * ",
+                        v_sgmvr.mon  USING "### ### ### ##&.&&"," * ",
+                        v_sgmvr.mctv USING "### ### ### ##&.&&"," * ",
+                        (v_sgmvr.mon - v_sgmvr.mctv) USING "--- --- --- --&.&&"," *"
+   IF LENGTH(v_deb CLIPPED) = 0 THEN LET v_deb = 0 END IF
+   IF LENGTH(v_cre CLIPPED) = 0 THEN LET v_cre = 0 END IF
+   IF LENGTH(v_dif CLIPPED) = 0 THEN LET v_dif = 0 END IF
+   LET v_deb = v_deb + v_sgmvr.mon
+   LET v_cre = v_cre + v_sgmvr.mctv
+   
+ON LAST ROW   
+   IF v_fin = 0 THEN
+      PRINT COLUMN 1," *------------*-------*-----*--------------------*--------------------*--------------------*"
+      PRINT COLUMN 1," * T O T A L    M V T S     * ",
+                       v_deb           USING "### ### ### ##&.&&"," * ",
+                       v_cre           USING "### ### ### ##&.&&"," * ",
+                       (v_deb - v_cre) USING "--- --- --- --&.&&"," *"
+      PRINT COLUMN 1," *------------*-------*-----*--------------------*--------------------*--------------------*"
+      LET v_fin = 1
+   END IF
+PAGE TRAILER
+   IF v_fin = 0 THEN
+      PRINT COLUMN 1," *------------*-------*-----*--------------------*--------------------*--------------------*"
+   ELSE   
+      SKIP 1 LINE
+   END IF   
+
+END REPORT
+####################################################################################################
+REPORT RECAP_KO(v_msge)
+DEFINE v_msge      CHAR(60)
+
+OUTPUT
+   LEFT   MARGIN 0
+   RIGHT  MARGIN 0
+   TOP    MARGIN 0
+   BOTTOM MARGIN 0
+   PAGE   LENGTH 64
+
+FORMAT
+PAGE HEADER
+   PRINT COLUMN 1,"SGMA                                                                     REFERENCE : spload72"
+   PRINT COLUMN 1,"                                                                         EDIT LE ",
+                  TODAY USING "DD/MM/YYYY"," A ",g_heurdeb[1,2],":",g_heurdeb[3,4],":",g_heurdeb[5,6]
+   SKIP 1 LINES
+   PRINT COLUMN 1,"                                   LISTE DES FICHIERS NON TRAITES                                    "
+   SKIP 1 LINES
+   PRINT COLUMN 1,"REPERTOIRE EXPLORE : ",Dir_In CLIPPED
+   PRINT COLUMN 1,"*-------------------------------------*--------------------------------------------------------------*"
+   PRINT COLUMN 1,"*               FICHIER               *                           MOTIF NON TRAITEMENT               *"
+   PRINT COLUMN 1,"*-------------------------------------*--------------------------------------------------------------*"
+   
+ON EVERY ROW
+   PRINT COLUMN 1,"* " ,g_file[1,35],
+                  " * ",v_msge,
+                  " *"
+ON LAST ROW
+   PRINT COLUMN 1,"*-------------------------------------*--------------------------------------------------------------*"
+PAGE TRAILER
+   PRINT COLUMN 1,"*-------------------------------------*--------------------------------------------------------------*"
+
+END REPORT
+####################################################################################################
+REPORT RECAP_OK()
+
+OUTPUT
+   LEFT   MARGIN 0
+   RIGHT  MARGIN 0
+   TOP    MARGIN 0
+   BOTTOM MARGIN 0
+   PAGE   LENGTH 64
+
+FORMAT
+PAGE HEADER
+
+   PRINT COLUMN 1,"SGMA                                                                                                     REFERENCE : spload72"
+   PRINT COLUMN 1,"EDIT LE ",TODAY USING "DD/MM/YYYY"," A ",g_heurdeb[1,2],":",g_heurdeb[3,4],":",g_heurdeb[5,6]
+   SKIP 1 LINES
+   PRINT COLUMN 1,"                                                 LISTE DES FICHIERS TRAITES"
+   SKIP 1 LINES
+   PRINT COLUMN 1,"REPERTOIRE EXPLORE : ",Dir_In CLIPPED
+   PRINT COLUMN 1,"*------------*--------*----------*----------*----------*----------------------*----------------------*----------------------*"
+   PRINT COLUMN 1,"*   MODULE   *   LOT  *   LUS    *  ECRITS  * IGNORES  *        DEBIT         *       CREDIT         *      DIFFERENCE      *"
+   PRINT COLUMN 1,"*------------*--------*----------*----------*----------*----------------------*----------------------*----------------------*"
+ON EVERY ROW
+   PRINT COLUMN 1,"* " ,g_cacc,
+                  " * ",g_nlot,
+                  " * ",g_lus           USING "########",
+                  " * ",g_ecr           USING "########",
+                  " * ",g_ign           USING "########",
+                  " * ",g_monD          USING "### ### ### ##&.&&&&",
+                  " * ",g_monC          USING "### ### ### ##&.&&&&",
+                  " * ",(g_monD-g_monC) USING "--- --- --- --&.&&&&",
+                  " *"
+ON LAST ROW
+   PRINT COLUMN 1,"*------------*--------*----------*----------*----------*----------------------*----------------------*----------------------*"
+PAGE TRAILER
+   PRINT COLUMN 1,"*------------*--------*----------*----------*----------*----------------------*----------------------*----------------------*"
+
+END REPORT
+####################################################################################################
+FUNCTION Fnc_Ltrim(vstr)
+DEFINE vstr        CHAR(300)
+DEFINE vchr        CHAR(1)
+DEFINE i           INTEGER
+
+   IF LENGTH(vstr CLIPPED) = 0 THEN RETURN vstr CLIPPED END IF
+   FOR i = 1 TO LENGTH(vstr CLIPPED)
+     LET vchr = vstr[i,i]
+     IF vchr != " " THEN 
+        LET vstr = vstr[i,300]
+        EXIT FOR
+     END IF
+  END FOR
+
+  RETURN vstr CLIPPED
+
+END FUNCTION
+####################################################################################################
+FUNCTION Fnc_Replace(vstr)
+DEFINE vstr        CHAR(300)
+DEFINE vnew        CHAR(300)
+DEFINE vchr        CHAR(1)
+DEFINE vold        CHAR(1)
+DEFINE i,j         INTEGER
+
+   IF LENGTH(vstr CLIPPED) = 0 THEN RETURN vstr CLIPPED END IF
+
+   LET vold = " "
+   LET j    = 0
+   FOR i = 1 TO LENGTH(vstr CLIPPED)
+     LET vchr = vstr[i,i]
+     IF vold = vchr AND vchr = " " THEN CONTINUE FOR END IF
+     LET j = j + 1
+     LET vnew[j,j] = vchr
+     LET vold = vchr
+  END FOR
+  
+  RETURN vnew CLIPPED
+
+END FUNCTION
+####################################################################################################
+FUNCTION Select_Bknom(vctab,vcacc)
+DEFINE vctab            LIKE Bknom.ctab
+DEFINE vcacc            LIKE Bknom.cacc
+
+   SET ISOLATION TO DIRTY READ;
+   INITIALIZE r_Bknom.* TO NULL
+   SELECT * INTO r_Bknom.* FROM Bknom WHERE ctab = vctab AND cacc = vcacc AND age = "99000"
+
+END FUNCTION
+####################################################################################################
+#                                                                                                  #
+####################################################################################################
+FUNCTION F_RollBack()
+DEFINE CodeStat      INTEGER
+
+  IF SQLCA.SQLCODE < 0 THEN
+     LET g_msgbox = "Erreur Transaction SQL : ",SQLCA.SQLCODE
+  ELSE
+     LET CodeStat = status
+     LET g_msgbox = "Erreur                 : ",CodeStat,". ",ERR_GET(CodeStat)
+  END IF
+  ROLLBACK WORK;
+  CALL Write_FTrace("E")
+
+END FUNCTION
+####################################################################################################
+FUNCTION F_Erreur()
+DEFINE CodeStat      INTEGER
+
+   LET CodeStat = status
+   LET g_msgbox = "Erreur                 : ",CodeStat USING "-<<<<<",". ",ERR_GET(CodeStat)
+   CALL Write_FTrace("E")
+
+END FUNCTION
+####################################################################################################
+FUNCTION Write_Ftrace(v_etat)
+DEFINE v_etat        CHAR(1)
+DEFINE v_nomfile     CHAR(80)
+Define Arg0          CHAR(256)
+Define ix            SMALLINT
+
+   LET g_hhmmss = TIME
+   LET g_ddmmyy = TODAY
+   CASE v_etat
+   WHEN "D"
+      LET g_base = fgl_GETENV("DATABASE")
+      DATABASE g_base
+
+      IF NUM_ARGS() = 0 THEN                   ## recuperation du code utilisateur
+         LET g_uti = "XXXX"                    ## a partir de la ligne de commande
+      ELSE                                     ## si non fournie, on affecte XXXX
+        LET g_uti = ARG_VAL(1)                 ##
+      END IF                                   ##
+
+      LET ARG0 = ARG_VAL(0)
+      FOR IX = LENGTH(ARG0) TO 1 STEP -1
+         IF ARG0[IX,IX]= "/" THEN
+            EXIT FOR
+         END IF
+      END FOR
+      LET g_prgname = ARG0[IX+1,LENGTH(ARG0)]
+      LET arg0      = g_prgname CLIPPED
+      LET g_prgname = ""
+      FOR ix = 1 TO LENGTH(arg0)
+          IF arg0[ix,ix] = "." THEN EXIT FOR END IF
+          LET g_prgname = g_prgname CLIPPED,arg0[ix,ix]
+      END FOR
+      LET g_prgname = g_prgname CLIPPED
+      LET g_datedeb = g_ddmmyy
+      LET g_heurdeb = g_hhmmss[1,2],g_hhmmss[4,5],g_hhmmss[7,8]
+      LET v_nomfile = "/tmp/trace",g_prgname CLIPPED
+      LET g_hndlog = base.Channel.create()
+      CALL g_hndlog.setdelimiter("")
+      CALL g_hndlog.openfile(v_nomfile,"w")
+
+      
+      LET g_msgbox = "======================================================================"
+      CALL g_hndlog.WRITE(g_msgbox[1,70])
+
+      DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "DEBUT DU PROGRAMME ",g_prgname[1,24],"        ",g_ddmmyy," ",g_hhmmss
+      CALL g_hndlog.WRITE(g_msgbox[1,70])
+
+      DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "======================================================================"
+      CALL g_hndlog.WRITE(g_msgbox[1,70])
+
+      DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "BASE DE DONNEES        : ",g_base
+      CALL g_hndlog.WRITE(g_msgbox[1,70])
+
+      DISPLAY g_msgbox[1,70]
+      CALL Insert_Sgtrace(v_etat)
+   WHEN "F"
+      LET g_msgbox = "======================================================================"
+      CALL g_hndlog.WRITE(g_msgbox[1,70])
+
+      DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "FIN NORMALE DU PROGRAMME ",g_prgname[1,24],"  ",g_ddmmyy," ",g_hhmmss
+      CALL g_hndlog.WRITE(g_msgbox[1,70])
+
+      DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "======================================================================"
+      CALL g_hndlog.WRITE(g_msgbox[1,70])
+
+      DISPLAY g_msgbox[1,70]
+      CALL g_hndlog.CLOSE()
+
+      CALL Insert_Sgtrace(v_etat)
+      CALL MAJ_Trace_Global()      
+   WHEN "E"
+      IF SQLCA.SQLCODE >= 0 THEN
+         CALL Insert_Sgtrace(v_etat)
+      END IF   
+      CALL g_hndlog.WRITE(g_msgbox[1,70])
+
+      DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "======================================================================"
+      CALL g_hndlog.WRITE(g_msgbox[1,70])
+
+      DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "FIN ANORMALE DU PROGRAMME ",g_prgname[1,24]," ",g_ddmmyy," ",g_hhmmss
+      CALL g_hndlog.WRITE(g_msgbox[1,70])
+
+      DISPLAY g_msgbox[1,70]
+      LET g_msgbox = "======================================================================"
+      CALL g_hndlog.WRITE(g_msgbox[1,70])
+
+      DISPLAY g_msgbox[1,70]
+      CALL g_hndlog.CLOSE()
+
+      CALL MAJ_Trace_Global()      
+   WHEN "W"
+      CALL g_hndlog.WRITE(g_msgbox[1,70])
+
+      DISPLAY g_msgbox[1,70]
+      CALL Insert_Sgtrace(v_etat)
+   OTHERWISE
+      CALL g_hndlog.WRITE(g_msgbox[1,70])
+
+      DISPLAY g_msgbox[1,70]
+   END CASE
+
+   IF v_etat = "E" OR v_etat = "F" THEN
+      IF v_etat = "E" THEN
+         EXIT PROGRAM(1)
+      ELSE
+         CALL Script()
+         EXIT PROGRAM(0)
+      END IF      
+   END IF
+
+END FUNCTION
+####################################################################################################
+FUNCTION Insert_SgTrace(v_etat)
+DEFINE v_etat        CHAR(1)
+DEFINE v_heurfin     CHAR(6)
+DEFINE v_datefin     DATE
+DEFINE v_heure       CHAR(10)
+
+   LET v_datefin = TODAY
+   LET v_heure   = TIME
+   LET v_heurfin = v_heure[1,2],v_heure[4,5],v_heure[7,8]
+   CASE v_etat
+   WHEN "D"
+      LET g_msgbox = "DEBUT NORMAL"      
+      LET v_datefin  = ""
+      LET v_heurfin  = ""
+   WHEN "F"
+      LET g_msgbox = "FIN NORMALE"      
+   END CASE
+   INSERT INTO sgtrace VALUES
+   (g_prgname,g_datedeb,g_heurdeb,v_datefin,v_heurfin,g_uti,v_etat,g_msgbox);
+
+END FUNCTION
+####################################################################################################
+FUNCTION MAJ_Trace_Global()
+DEFINE v_ftrace      CHAR(80)
+DEFINE v_gtrace      CHAR(80)
+DEFINE v_run         CHAR(250)
+
+   WHENEVER ERROR CONTINUE
+   
+   LET v_ftrace = "/tmp/trace",g_prgname CLIPPED
+   LET v_gtrace = "XXXXXXXXXX"
+
+   SELECT lib2 INTO v_gtrace FROM Bknom 
+    WHERE ctab = "097" AND age = "99000" AND cacc = "R000"
+    
+   IF v_gtrace IS NULL THEN LET v_gtrace = "XXXXXXXXXX" END IF
+   
+   IF v_gtrace != "XXXXXXXXXX" THEN
+      LET v_run = "cat ",v_ftrace CLIPPED," >> ",v_gtrace CLIPPED," 2>/dev/null"
+      run v_run
+   END IF
+
+END FUNCTION
+####################################################################################################
+FUNCTION Script()
+DEFINE vexec  CHAR(200)
+DEFINE vrun   SMALLINT
+
+   LET vexec = "$BANK/bin/ex-",g_prgname CLIPPED,".ksh &" 
+   LET vrun  = exec_cmd (vexec CLIPPED)
+
+END FUNCTION
+####################################################################################################
+{
+("99000","097","R876","REP.ETAT DES REJETS PAR LOT"   ,"/tmp/load72/rejets/"    );
+("99000","097","R875","REP.ETAT DES MVTS   PAR LOT"   ,"/tmp/load72/etats/"     );
+("99000","097","R889","REP.ETAT RECAP LOTS TRAITES"   ,"/tmp/load72/recap/ok/"  );
+("99000","097","R898","REP.ETAT RECAP LOTS NONTRAITES","/tmp/load72/recap/ko/"  );
+("99000","097","R438","REP.ARCHIVE LOTS NON TRAITES"  ,"/tmp/load72/archive/ko/");
+("99000","470","SPLOAD72","PRISE EN CHARGE LOTS COMPATBLE","/tmp/load72/IN/","/tmp/load72/archive/ok/");
+}
